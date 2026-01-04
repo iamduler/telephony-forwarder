@@ -26,18 +26,18 @@ type Consumer struct {
 }
 
 // NewConsumer creates a new NATS consumer with PUSH-based delivery
-// 
+//
 // JetStream Retry and Backoff Behavior:
 // - When a message is not acknowledged within ack_wait seconds, JetStream will redeliver it
 // - MaxDeliver limits the total number of delivery attempts (including the first)
 // - Exponential backoff is achieved by configuring ack_wait appropriately:
 //   - First retry: after ack_wait (e.g., 1s)
-//   - Second retry: after ack_wait (e.g., 3s) 
+//   - Second retry: after ack_wait (e.g., 3s)
 //   - Third retry: after ack_wait (e.g., 7s)
-// - The service does NOT implement retry logic - it relies entirely on JetStream's
-//   at-least-once delivery semantics
-// - If ANY endpoint fails during forwarding, the message is NOT acknowledged,
-//   causing JetStream to redeliver the entire message after ack_wait expires
+//   - The service does NOT implement retry logic - it relies entirely on JetStream's
+//     at-least-once delivery semantics
+//   - If ANY endpoint fails during forwarding, the message is NOT acknowledged,
+//     causing JetStream to redeliver the entire message after ack_wait expires
 func NewConsumer(url, streamName, subjectPattern, consumerName string, ackWait, maxDeliveries int) (*Consumer, error) {
 	opts := []nats.Option{
 		nats.Name("event-hub-consumer"),
@@ -71,7 +71,19 @@ func NewConsumer(url, streamName, subjectPattern, consumerName string, ackWait, 
 		return nil, err
 	}
 
-	// Create or get consumer with PUSH-based delivery
+	// Delete existing consumer if it exists (to ensure correct configuration)
+	// This is necessary because consumer configuration cannot be changed once created
+	err = js.DeleteConsumer(streamName, consumerName)
+	if err != nil {
+		// Ignore error if consumer doesn't exist
+		if !contains(err.Error(), "not found") && !contains(err.Error(), "does not exist") {
+			logger.Logger.Warn("Failed to delete existing consumer (may not exist)", zap.Error(err))
+		}
+	} else {
+		logger.Logger.Info("Deleted existing consumer to recreate with correct configuration", zap.String("consumer", consumerName))
+	}
+
+	// Create consumer with PUSH-based delivery
 	// AckWait: 10 seconds (must be > backend timeout of 3 seconds)
 	// MaxDeliver: 3 attempts total
 	// AckPolicy: Explicit - we must manually acknowledge
@@ -87,27 +99,49 @@ func NewConsumer(url, streamName, subjectPattern, consumerName string, ackWait, 
 	}
 
 	_, err = js.AddConsumer(streamName, consumerConfig)
-	// Ignore error if consumer already exists (it's fine to reuse existing consumer)
-	if err != nil {
-		// Check if it's a "consumer already exists" type error
-		if err.Error() != "consumer name already in use" && !contains(err.Error(), "already exists") {
-			conn.Close()
-			return nil, err
-		}
-		// Consumer exists, that's fine - we'll bind to it
-		logger.Logger.Info("Consumer already exists, reusing", zap.String("consumer", consumerName))
-	}
-
-	// Create a message channel for PUSH-based delivery
-	msgChan := make(chan *nats.Msg, 100)
-
-	// Subscribe with channel-based delivery (true PUSH semantics)
-	// Messages are pushed to msgChan as they arrive
-	sub, err := js.ChanSubscribe(subjectPattern, msgChan, nats.Bind(streamName, consumerName))
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
+	logger.Logger.Info("Created NATS consumer", zap.String("consumer", consumerName))
+
+	// Create a message channel for PUSH-based delivery
+	msgChan := make(chan *nats.Msg, 100)
+
+	// For PUSH-based delivery with durable consumer, we need to use PullSubscribe
+	// with a continuous fetch loop to simulate PUSH behavior
+	// This is because NATS JetStream durable consumers are typically PULL-based
+	sub, err := js.PullSubscribe(subjectPattern, consumerName, nats.ManualAck())
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	// Start a goroutine to continuously fetch messages and push to channel
+	// This simulates PUSH-based delivery by polling with very short intervals
+	go func() {
+		defer close(msgChan)
+		for {
+			// Fetch with small batch size and short timeout to simulate PUSH
+			msgs, err := sub.Fetch(1, nats.MaxWait(50*time.Millisecond))
+			if err != nil {
+				if err == nats.ErrTimeout {
+					// Timeout is expected when no messages available, continue polling
+					continue
+				}
+				// Other errors - log and exit
+				logger.Logger.Error("Error fetching messages from NATS", zap.Error(err))
+				return
+			}
+			for _, msg := range msgs {
+				select {
+				case msgChan <- msg:
+				default:
+					logger.Logger.Warn("Message channel full, dropping message")
+				}
+			}
+		}
+	}()
 
 	cons := &Consumer{
 		conn:    conn,

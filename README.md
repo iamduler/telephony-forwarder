@@ -61,7 +61,7 @@ nats:
   max_deliveries: 3
 
 routes:
-  - domain: "event-hub.com"
+  - domain: "telephony-forwarder.com"
     endpoints:
       - "https://backend1.example.com/webhook"
       - "https://backend2.example.com/webhook"
@@ -71,13 +71,13 @@ routes:
 
 ```bash
 go mod download
-go build -o event-hub ./cmd/main.go
+go build -o telephony-forwarder ./cmd/main.go
 ```
 
 ## Running
 
 ```bash
-./event-hub -config config.yaml -log-level info
+./telephony-forwarder -config config.yaml -log-level info
 ```
 
 ### Command Line Flags
