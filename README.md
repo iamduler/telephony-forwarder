@@ -9,6 +9,10 @@ A production-ready Golang service that acts as a public HTTP ingress and telepho
 - **Concurrent Forwarding**: Forwards events to multiple backend endpoints in parallel
 - **Automatic Retries**: Leverages JetStream's at-least-once delivery semantics
 - **Health Checks**: Exposes GET `/health` endpoint
+- **Web Dashboard**: Real-time monitoring interface for events, statistics, and logs
+- **Domain-based Logging**: Logs grouped by domain with automatic rotation
+- **Event Tracking**: In-memory store for successful and failed events
+- **Log File Reading**: Read and parse events from log files via API
 - **Graceful Shutdown**: Handles SIGINT/SIGTERM cleanly
 
 ## Architecture
@@ -84,6 +88,8 @@ go build -o telephony-forwarder ./cmd/main.go
 
 - `-config`: Path to configuration file (default: `config.yaml`)
 - `-log-level`: Log level: debug, info, warn, error (default: `info`)
+- `-log-file`: Path to log file (empty = stdout only, ignored if `-domain-logging` is enabled)
+- `-domain-logging`: Enable domain-based logging (logs grouped by domain in `logs/` directory) (default: `true`)
 
 ## API Endpoints
 
@@ -132,6 +138,160 @@ Health check endpoint.
 - `200 OK`: Service is healthy (HTTP server running, NATS connected)
 - `503 Service Unavailable`: NATS not connected
 
+### GET /api/events
+
+Returns events from the in-memory store, grouped by domain.
+
+**Query Parameters:**
+- `type`: Filter by event type: `successful`, `failed`, or `all` (default: `all`)
+- `domain`: Filter by domain (optional)
+
+**Response:**
+```json
+{
+  "events_by_domain": {
+    "example.com": [
+      {
+        "call_id": "123",
+        "domain": "example.com",
+        "direction": "inbound",
+        "state": "missed",
+        "status": "busy-line",
+        "forwarded_at": "2026-01-04T10:00:00Z",
+        "delivery_attempt": 1,
+        "event": {...}
+      }
+    ]
+  },
+  "failed_events_by_domain": {
+    "example.com": [
+      {
+        "call_id": "456",
+        "domain": "example.com",
+        "direction": "inbound",
+        "state": "missed",
+        "status": "busy-line",
+        "failed_at": "2026-01-04T10:00:00Z",
+        "error": "connection timeout",
+        "delivery_attempt": 1,
+        "max_deliveries": 3,
+        "will_retry": true,
+        "event": {...}
+      }
+    ]
+  }
+}
+```
+
+### GET /api/stats
+
+Returns statistics about forwarded events.
+
+**Response:**
+```json
+{
+  "total_successful": 100,
+  "total_failed": 5,
+  "retry_count": 3,
+  "successful_domain_count": 10,
+  "failed_domain_count": 2
+}
+```
+
+### GET /api/logs
+
+Reads events from log files, grouped by domain.
+
+**Query Parameters:**
+- `domain`: Domain name (sanitized, e.g., `example_com` for `example.com`) (optional, if omitted returns list of domains)
+- `date`: Date in format `YYYY-MM-DD` (default: today)
+
+**Response (with domain):**
+```json
+{
+  "events_by_domain": {
+    "example.com": [...]
+  },
+  "failed_events_by_domain": {
+    "example.com": [
+      {
+        "call_id": "123",
+        "domain": "example.com",
+        "direction": "inbound",
+        "state": "missed",
+        "status": "busy-line",
+        "failed_at": "2026-01-04T10:00:00Z",
+        "error": "connection timeout",
+        "delivery_attempt": 1,
+        "max_deliveries": 3,
+        "will_retry": true
+      }
+    ]
+  },
+  "stats": {
+    "total_successful": 100,
+    "total_failed": 5,
+    "retry_count": 3
+  }
+}
+```
+
+**Response (without domain):**
+```json
+{
+  "domains": [
+    {
+      "domain": "example.com",
+      "sanitized": "example_com",
+      "dates": ["2026-01-04", "2026-01-03"]
+    }
+  ]
+}
+```
+
+### GET /api/logs/domains
+
+Lists all available log domains.
+
+**Response:**
+```json
+{
+  "domains": [
+    {
+      "domain": "example.com",
+      "sanitized": "example_com",
+      "dates": ["2026-01-04", "2026-01-03"]
+    }
+  ]
+}
+```
+
+### GET /api/stream/messages
+
+Reads messages directly from the NATS JetStream stream.
+
+**Query Parameters:**
+- `limit`: Maximum number of messages to return (default: 50)
+
+**Response:**
+```json
+{
+  "messages": [
+    {
+      "subject": "call.signal.example.com",
+      "sequence": 123,
+      "timestamp": "2026-01-04T10:00:00Z",
+      "data": {...}
+    }
+  ],
+  "total": 123
+}
+```
+
+### GET /
+
+Web dashboard for monitoring events, statistics, and logs.
+
 ## Event Forwarding
 
 Events are forwarded to ALL endpoints configured for the domain:
@@ -141,16 +301,61 @@ Events are forwarded to ALL endpoints configured for the domain:
 - **Timeout**: 3 seconds per endpoint
 - **Idempotent**: Backends must handle duplicate events (same `call_id`)
 - **Domain-based Routing**: Events are routed based on the `domain` field in the payload
+- **Delivery Attempt Tracking**: Each forwarded event includes `delivery_attempt` in the payload (1, 2, 3...)
+- **Event Tracking**: Successful and failed events are stored in-memory and can be queried via API
 
 ## Logging
 
-Structured logging using zap. Logs include:
+Structured logging using zap with domain-based file organization.
+
+### Log Structure
+
+Logs include:
 - `call_id`: Unique call identifier
 - `domain`: Tenant identifier (used for routing)
+- `direction`: Call direction (e.g., "inbound", "outbound")
 - `state`: Call state (e.g., "missed", "answered")
 - `status`: Call status (e.g., "busy-line", "completed")
 - `delivery_attempt`: Current delivery attempt (1, 2, or 3)
 - Error details when forwarding fails
+
+### Domain-based Logging
+
+When `-domain-logging` is enabled (default), logs are organized as follows:
+
+```
+logs/
+├── example_com/
+│   ├── 2026-01-04.log
+│   ├── 2026-01-03.log
+│   └── ...
+├── another_domain_com/
+│   ├── 2026-01-04.log
+│   └── ...
+└── unknown_domain_com/
+    └── 2026-01-04.log
+```
+
+**Features:**
+- **Automatic Rotation**: Log files rotate daily (one file per day per domain)
+- **Size Limits**: 500MB per file, 30 backups, 30 days retention
+- **Compression**: Old log files are automatically compressed
+- **Domain Sanitization**: Domain names are sanitized for filesystem compatibility (e.g., `example.com` → `example_com`)
+
+### Log Events
+
+The following events are logged:
+- `Event received and published`: When an event is received via HTTP and published to NATS
+- `Forwarding event`: When forwarding to backend endpoints begins
+- `Event forwarded successfully`: When all endpoints respond successfully
+- `Failed to forward event`: When forwarding fails (with error details and `delivery_attempt`)
+
+### Reading Logs
+
+Logs can be read via:
+- **API**: `/api/logs?domain=<sanitized_domain>&date=YYYY-MM-DD`
+- **Dashboard**: Web interface with toggle to read from log files
+- **File System**: Direct access to log files in `logs/` directory
 
 ## Graceful Shutdown
 
@@ -168,20 +373,58 @@ The service handles SIGINT and SIGTERM:
 - NATS Server with JetStream enabled
 - Backend endpoints must be idempotent
 
+## Web Dashboard
+
+The service includes a web dashboard accessible at `http://localhost:8080/` (or your configured port).
+
+### Features
+
+- **Event Monitoring**: View successful and failed events grouped by domain
+- **Statistics**: Real-time statistics (total successful, failed, retries, domain counts)
+- **Filtering**: Filter events by domain and type (successful/failed/all)
+- **Log File Reading**: Toggle between in-memory store and log files
+- **Date Selection**: Select specific date when reading from log files
+- **Retry Status**: Visual indicators for events that will be retried
+- **Event Details**: Expandable event cards with full payload information
+
+### Usage
+
+1. Start the service with domain logging enabled:
+   ```bash
+   ./cmd/app -config config.yaml -log-level info -domain-logging
+   ```
+
+2. Open browser to `http://localhost:8080/`
+
+3. Use the toggle "Đọc từ log files" to switch between:
+   - **In-memory store**: Real-time events from current session
+   - **Log files**: Historical events from log files
+
+4. Select a date when reading from log files
+
+5. Filter by domain using the domain selector
+
 ## Project Structure
 
 ```
-calleventhub/
+telephony-forwarder/
 ├── cmd/
 │   └── main.go              # Application entry point
 ├── internal/
 │   ├── config/              # Configuration management
 │   ├── consumer/            # Event consumer service
 │   ├── forwarder/           # HTTP forwarding logic
-│   ├── http/                # HTTP handlers
-│   ├── logger/              # Structured logging
-│   └── nats/                # NATS publisher and consumer
-├── config.yaml.example      # Example configuration
+│   ├── http/                # HTTP handlers and web dashboard
+│   │   └── web/
+│   │       └── dashboard.html  # Embedded web dashboard
+│   ├── logger/              # Structured logging with domain-based files
+│   ├── nats/                # NATS publisher and consumer
+│   └── store/               # In-memory event store
+├── logs/                    # Domain-based log files (created at runtime)
+│   ├── example_com/
+│   │   └── YYYY-MM-DD.log
+│   └── ...
+├── config.yaml              # Configuration file
 ├── go.mod
 └── README.md
 ```
