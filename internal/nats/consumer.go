@@ -17,12 +17,13 @@ func contains(s, substr string) bool {
 
 // Consumer handles consuming events from NATS JetStream
 type Consumer struct {
-	conn    *nats.Conn
-	js      nats.JetStreamContext
-	sub     *nats.Subscription
-	stream  string
-	subject string
-	msgChan chan *nats.Msg
+	conn     *nats.Conn
+	js       nats.JetStreamContext
+	sub      *nats.Subscription
+	stream   string
+	subject  string
+	msgChan  chan *nats.Msg
+	stopChan chan struct{}
 }
 
 // NewConsumer creates a new NATS consumer with PUSH-based delivery
@@ -119,39 +120,62 @@ func NewConsumer(url, streamName, subjectPattern, consumerName string, ackWait, 
 		return nil, err
 	}
 
+	// Create stop channel for graceful shutdown
+	stopChan := make(chan struct{})
+
 	// Start a goroutine to continuously fetch messages and push to channel
 	// This simulates PUSH-based delivery by polling with very short intervals
 	go func() {
 		defer close(msgChan)
 		for {
-			// Fetch with small batch size and short timeout to simulate PUSH
-			msgs, err := sub.Fetch(1, nats.MaxWait(50*time.Millisecond))
-			if err != nil {
-				if err == nats.ErrTimeout {
-					// Timeout is expected when no messages available, continue polling
-					continue
-				}
-				// Other errors - log and exit
-				logger.Logger.Error("Error fetching messages from NATS", zap.Error(err))
+			select {
+			case <-stopChan:
+				// Stop signal received, exit gracefully
 				return
-			}
-			for _, msg := range msgs {
-				select {
-				case msgChan <- msg:
-				default:
-					logger.Logger.Warn("Message channel full, dropping message")
+			default:
+				// Check if subscription is still valid before fetching
+				if sub == nil {
+					return
+				}
+
+				// Fetch with small batch size and short timeout to simulate PUSH
+				msgs, err := sub.Fetch(1, nats.MaxWait(50*time.Millisecond))
+				if err != nil {
+					if err == nats.ErrTimeout {
+						// Timeout is expected when no messages available, continue polling
+						continue
+					}
+					// Check if subscription is invalid (e.g., during shutdown)
+					if contains(err.Error(), "invalid subscription") || contains(err.Error(), "subscription closed") {
+						// Subscription was closed, exit gracefully
+						return
+					}
+					// Other errors - log and exit
+					logger.Logger.Error("Error fetching messages from NATS", zap.Error(err))
+					return
+				}
+				for _, msg := range msgs {
+					select {
+					case msgChan <- msg:
+					case <-stopChan:
+						// Stop signal received while sending, exit gracefully
+						return
+					default:
+						logger.Logger.Warn("Message channel full, dropping message")
+					}
 				}
 			}
 		}
 	}()
 
 	cons := &Consumer{
-		conn:    conn,
-		js:      js,
-		sub:     sub,
-		stream:  streamName,
-		subject: subjectPattern,
-		msgChan: msgChan,
+		conn:     conn,
+		js:       js,
+		sub:      sub,
+		stream:   streamName,
+		subject:  subjectPattern,
+		msgChan:  msgChan,
+		stopChan: stopChan,
 	}
 
 	return cons, nil
@@ -174,6 +198,14 @@ func (c *Consumer) Nak(msg *nats.Msg) error {
 
 // Close closes the consumer subscription and connection
 func (c *Consumer) Close() {
+	// Signal the fetch goroutine to stop
+	if c.stopChan != nil {
+		close(c.stopChan)
+	}
+
+	// Wait a bit for goroutine to finish
+	time.Sleep(100 * time.Millisecond)
+
 	if c.sub != nil {
 		c.sub.Unsubscribe()
 		c.sub.Drain()

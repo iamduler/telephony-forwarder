@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"calleventhub/internal/config"
 	"calleventhub/internal/logger"
 	"calleventhub/internal/nats"
 	"calleventhub/internal/store"
@@ -55,13 +56,15 @@ type Event struct {
 type Handler struct {
 	publisher *nats.Publisher
 	store     *store.Store
+	config    *config.Config
 }
 
 // NewHandler creates a new HTTP handler
-func NewHandler(publisher *nats.Publisher, eventStore *store.Store) *Handler {
+func NewHandler(publisher *nats.Publisher, eventStore *store.Store, cfg *config.Config) *Handler {
 	return &Handler{
 		publisher: publisher,
 		store:     eventStore,
+		config:    cfg,
 	}
 }
 
@@ -451,22 +454,56 @@ func (h *Handler) HandleGetLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract events from logs (look for "Event forwarded successfully" and "Failed to forward event")
+	// We need to track "Event received and published" entries to get direction and other fields
 	eventsByDomain := make(map[string][]map[string]interface{})
 	failedEventsByDomain := make(map[string][]map[string]interface{})
 
+	// Track event metadata by call_id to enrich failed events
+	eventMetadata := make(map[string]map[string]interface{}) // call_id -> metadata
+
+	maxDeliveries := 3 // Default value
+	if h.config != nil {
+		maxDeliveries = h.config.NATS.MaxDeliveries
+	}
+
 	for domain, entries := range logsByDomain {
+		// First pass: collect metadata from "Event received and published"
+		for _, entry := range entries {
+			if entry.Message == "Event received and published" {
+				metadata := map[string]interface{}{
+					"direction": entry.Direction,
+					"state":     entry.State,
+					"status":    entry.Status,
+				}
+				if entry.CallID != "" {
+					eventMetadata[entry.CallID] = metadata
+				}
+			}
+		}
+
+		// Second pass: extract events
 		for _, entry := range entries {
 			if entry.Message == "Event forwarded successfully" || entry.Message == "Forwarding event" {
 				deliveryAttempt := 1
 				if entry.DeliveryAttempt > 0 {
 					deliveryAttempt = entry.DeliveryAttempt
 				}
+
+				// Get metadata from "Event received and published" if available
+				metadata := eventMetadata[entry.CallID]
+				direction := entry.Direction
+				if direction == "" && metadata != nil {
+					if d, ok := metadata["direction"].(string); ok {
+						direction = d
+					}
+				}
+
 				event := map[string]interface{}{
 					"call_id":          entry.CallID,
 					"domain":           entry.Domain,
 					"state":            entry.State,
 					"status":           entry.Status,
-					"direction":        entry.Direction,
+					"direction":        direction,
 					"forwarded_at":     entry.Timestamp,
 					"delivery_attempt": deliveryAttempt,
 				}
@@ -476,15 +513,27 @@ func (h *Handler) HandleGetLogs(w http.ResponseWriter, r *http.Request) {
 				if entry.DeliveryAttempt > 0 {
 					deliveryAttempt = entry.DeliveryAttempt
 				}
+
+				// Get metadata from "Event received and published" if available
+				metadata := eventMetadata[entry.CallID]
+				direction := entry.Direction
+				if direction == "" && metadata != nil {
+					if d, ok := metadata["direction"].(string); ok {
+						direction = d
+					}
+				}
+
 				event := map[string]interface{}{
 					"call_id":          entry.CallID,
 					"domain":           entry.Domain,
 					"state":            entry.State,
 					"status":           entry.Status,
-					"direction":        entry.Direction,
+					"direction":        direction,
 					"failed_at":        entry.Timestamp,
 					"error":            entry.Error,
 					"delivery_attempt": deliveryAttempt,
+					"max_deliveries":   maxDeliveries,
+					"will_retry":       deliveryAttempt < maxDeliveries,
 				}
 				failedEventsByDomain[domain] = append(failedEventsByDomain[domain], event)
 			}

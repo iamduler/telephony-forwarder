@@ -76,7 +76,7 @@ func main() {
 	consumerService := consumer.NewConsumerService(cfg, natsConsumer, fwd)
 
 	// Create HTTP handler
-	httpHandler := http.NewHandler(publisher, eventStore)
+	httpHandler := http.NewHandler(publisher, eventStore, cfg)
 
 	// Create HTTP server
 	httpServer := http.NewServer(cfg.Server.Port, httpHandler)
