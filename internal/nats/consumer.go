@@ -87,10 +87,12 @@ func NewConsumer(url, streamName, subjectPattern, consumerName string, ackWait, 
 	// AckWait: 10 seconds (must be > backend timeout of 3 seconds)
 	// MaxDeliver: 3 attempts total
 	// AckPolicy: Explicit - we must manually acknowledge
+	// DeliverPolicy: DeliverNewPolicy - only receive NEW messages (not old ones in stream)
+	// This prevents replaying old messages when the service restarts
 	consumerConfig := &nats.ConsumerConfig{
 		Name:          consumerName,
 		Durable:       consumerName,
-		DeliverPolicy: nats.DeliverAllPolicy,
+		DeliverPolicy: nats.DeliverNewPolicy, // Changed from DeliverAllPolicy to only process new messages
 		AckPolicy:     nats.AckExplicitPolicy,
 		AckWait:       time.Duration(ackWait) * time.Second,
 		MaxDeliver:    maxDeliveries,
