@@ -41,29 +41,30 @@ func NewForwarder(cfg *config.Config) *Forwarder {
 // - If ANY endpoint fails (non-2xx response or timeout), returns error
 // - The caller should NOT acknowledge the JetStream message if this returns an error
 // - JetStream will redeliver the entire message after ack_wait expires
-// - Backend endpoints MUST be idempotent based on event_id
+// - Backend endpoints MUST be idempotent based on call_id
 func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain string, deliveryAttempt int) error {
 	endpoints := f.config.GetEndpoints(domain)
 	if len(endpoints) == 0 {
 		return fmt.Errorf("no endpoints configured for domain: %s", domain)
 	}
 
-	// Parse event to extract event_id for logging
+	// Parse event to extract call_id for logging
 	var event struct {
-		EventID string `json:"event_id"`
-		Type    string `json:"type"`
+		CallID string `json:"call_id"`
+		State  string `json:"state"`
+		Status string `json:"status"`
 	}
 	if err := json.Unmarshal(eventData, &event); err != nil {
 		logger.Logger.Warn("Failed to parse event for logging", zap.Error(err))
 	}
 
-	eventID := event.EventID
-	eventType := event.Type
+	callID := event.CallID
 
 	logger.Logger.Info("Forwarding event",
-		zap.String("event_id", eventID),
+		zap.String("call_id", callID),
 		zap.String("domain", domain),
-		zap.String("type", eventType),
+		zap.String("state", event.State),
+		zap.String("status", event.Status),
 		zap.Int("delivery_attempt", deliveryAttempt),
 		zap.Int("endpoint_count", len(endpoints)),
 	)
@@ -72,11 +73,11 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(endpoints))
 
-	for _, endpoint := range endpoints {
+		for _, endpoint := range endpoints {
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
-			if err := f.forwardToEndpoint(ctx, url, eventData, eventID, domain, eventType); err != nil {
+			if err := f.forwardToEndpoint(ctx, url, eventData, callID, domain, event.State, event.Status); err != nil {
 				errChan <- fmt.Errorf("endpoint %s failed: %w", url, err)
 			}
 		}(endpoint)
@@ -94,9 +95,10 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 
 	if len(errors) > 0 {
 		logger.Logger.Error("Event forwarding failed",
-			zap.String("event_id", eventID),
+			zap.String("call_id", callID),
 			zap.String("domain", domain),
-			zap.String("type", eventType),
+			zap.String("state", event.State),
+			zap.String("status", event.Status),
 			zap.Int("delivery_attempt", deliveryAttempt),
 			zap.Int("failed_endpoints", len(errors)),
 			zap.Any("errors", errors),
@@ -105,9 +107,10 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 	}
 
 	logger.Logger.Info("Event forwarded successfully",
-		zap.String("event_id", eventID),
+		zap.String("call_id", callID),
 		zap.String("domain", domain),
-		zap.String("type", eventType),
+		zap.String("state", event.State),
+		zap.String("status", event.Status),
 		zap.Int("delivery_attempt", deliveryAttempt),
 		zap.Int("endpoint_count", len(endpoints)),
 	)
@@ -116,22 +119,23 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 }
 
 // forwardToEndpoint forwards the event to a single endpoint
-func (f *Forwarder) forwardToEndpoint(ctx context.Context, url string, eventData []byte, eventID, domain, eventType string) error {
+func (f *Forwarder) forwardToEndpoint(ctx context.Context, url string, eventData []byte, callID, domain, state, status string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(eventData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Event-ID", eventID)
+	req.Header.Set("X-Call-ID", callID)
 	req.Header.Set("X-Domain", domain)
 
 	resp, err := f.client.Do(req)
 	if err != nil {
 		logger.Logger.Warn("HTTP request failed",
-			zap.String("event_id", eventID),
+			zap.String("call_id", callID),
 			zap.String("domain", domain),
-			zap.String("type", eventType),
+			zap.String("state", state),
+			zap.String("status", status),
 			zap.String("endpoint", url),
 			zap.Error(err),
 		)
@@ -142,9 +146,10 @@ func (f *Forwarder) forwardToEndpoint(ctx context.Context, url string, eventData
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		err := fmt.Errorf("non-2xx response: %d", resp.StatusCode)
 		logger.Logger.Warn("HTTP request returned non-2xx",
-			zap.String("event_id", eventID),
+			zap.String("call_id", callID),
 			zap.String("domain", domain),
-			zap.String("type", eventType),
+			zap.String("state", state),
+			zap.String("status", status),
 			zap.String("endpoint", url),
 			zap.Int("status_code", resp.StatusCode),
 		)

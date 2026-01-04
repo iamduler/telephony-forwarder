@@ -15,19 +15,18 @@ nats:
 
 # Route configuration: maps domains to backend endpoints
 # Events are forwarded to ALL endpoints for a domain concurrently
+# The system detects the domain from the "domain" field in the event payload
 routes:
+  - domain: "vietanh.cloudgo.vn"
+    endpoints:
+      - "http://localhost/vietanh/entrypoint.php?name=CloudCALLConnector&secret_key=bb7d4b236b564cf1ec27aa891331e01212"
+  
   - domain: "event-hub.com"
     endpoints:
       - "https://backend1.example.com/webhook"
       - "https://backend2.example.com/webhook"
-      - "https://backend3.example.com/webhook"
   
   - domain: "tenant1.example.com"
     endpoints:
       - "https://tenant1-backend.example.com/events"
-  
-  - domain: "tenant2.example.com"
-    endpoints:
-      - "https://tenant2-backend.example.com/events"
-      - "https://tenant2-backup.example.com/events"
 

@@ -94,21 +94,34 @@ Accepts telephony signaling events.
 **Request Body:**
 ```json
 {
-  "event_id": "unique-event-id",
-  "domain": "event-hub.com",
-  "type": "call.start",
-  "timestamp": 1234567890,
-  "payload": {
-    "call_id": "call-123",
-    "from": "+1234567890",
-    "to": "+0987654321"
-  }
+  "actual_hotline": "",
+  "billsec": "62",
+  "call_id": "d1570d38-edc3-4751-a32d-63a30e95c57a",
+  "crm_contact_id": "",
+  "direction": "inbound",
+  "domain": "vietanh.cloudgo.vn",
+  "duration": "63",
+  "from_number": "0914315989",
+  "hotline": "02743857008",
+  "network": "vina",
+  "provider": "",
+  "receive_dest": "2006",
+  "sip_call_id": "7bcP02218160402mbeGhEfCjIjJ0m@10.202.49.38",
+  "sip_hangup_disposition": "recv_bye",
+  "state": "missed",
+  "status": "busy-line",
+  "time_ended": "2026-01-04 16:19:14",
+  "time_started": "2026-01-04 16:18:12",
+  "to_number": ""
 }
 ```
 
+**Required Fields:**
+- `domain`: Used for routing to backend endpoints (required)
+
 **Response:**
 - `202 Accepted`: Event accepted and published to JetStream
-- `400 Bad Request`: Invalid payload or missing required fields
+- `400 Bad Request`: Invalid payload or missing `domain` field
 - `500 Internal Server Error`: Failed to publish to JetStream
 
 ### GET /health
@@ -126,14 +139,16 @@ Events are forwarded to ALL endpoints configured for the domain:
 - **Concurrent**: All endpoints receive the request in parallel
 - **Atomic**: Either ALL endpoints succeed or the message is redelivered
 - **Timeout**: 3 seconds per endpoint
-- **Idempotent**: Backends must handle duplicate events (same `event_id`)
+- **Idempotent**: Backends must handle duplicate events (same `call_id`)
+- **Domain-based Routing**: Events are routed based on the `domain` field in the payload
 
 ## Logging
 
 Structured logging using zap. Logs include:
-- `event_id`: Unique event identifier
-- `domain`: Tenant identifier
-- `type`: Signal type
+- `call_id`: Unique call identifier
+- `domain`: Tenant identifier (used for routing)
+- `state`: Call state (e.g., "missed", "answered")
+- `status`: Call status (e.g., "busy-line", "completed")
 - `delivery_attempt`: Current delivery attempt (1, 2, or 3)
 - Error details when forwarding fails
 

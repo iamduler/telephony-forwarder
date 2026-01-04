@@ -14,12 +14,27 @@ import (
 )
 
 // Event represents the incoming event payload
+// This matches the actual telephony signaling event structure
 type Event struct {
-	EventID   string                 `json:"event_id"`
-	Domain    string                 `json:"domain"`
-	Type      string                 `json:"type"`
-	Timestamp int64                  `json:"timestamp"`
-	Payload   map[string]interface{} `json:"payload"`
+	ActualHotline         string `json:"actual_hotline"`
+	Billsec              string `json:"billsec"`
+	CallID               string `json:"call_id"`
+	CRMContactID         string `json:"crm_contact_id"`
+	Direction            string `json:"direction"`
+	Domain               string `json:"domain"` // Required: used for routing
+	Duration             string `json:"duration"`
+	FromNumber           string `json:"from_number"`
+	Hotline              string `json:"hotline"`
+	Network              string `json:"network"`
+	Provider             string `json:"provider"`
+	ReceiveDest          string `json:"receive_dest"`
+	SIPCallID            string `json:"sip_call_id"`
+	SIPHangupDisposition string `json:"sip_hangup_disposition"`
+	State                string `json:"state"`
+	Status               string `json:"status"`
+	TimeEnded            string `json:"time_ended"`
+	TimeStarted          string `json:"time_started"`
+	ToNumber             string `json:"to_number"`
 }
 
 // Handler handles HTTP requests
@@ -49,37 +64,32 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate required fields
-	if event.EventID == "" {
-		http.Error(w, "event_id is required", http.StatusBadRequest)
-		return
-	}
+	// Domain is required for routing
 	if event.Domain == "" {
 		http.Error(w, "domain is required", http.StatusBadRequest)
-		return
-	}
-	if event.Type == "" {
-		http.Error(w, "type is required", http.StatusBadRequest)
 		return
 	}
 
 	// Publish to NATS JetStream
 	eventJSON, err := json.Marshal(event)
 	if err != nil {
-		logger.Logger.Error("Failed to marshal event", zap.Error(err), zap.String("event_id", event.EventID))
+		logger.Logger.Error("Failed to marshal event", zap.Error(err), zap.String("call_id", event.CallID), zap.String("domain", event.Domain))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	if err := h.publisher.Publish(eventJSON); err != nil {
-		logger.Logger.Error("Failed to publish event", zap.Error(err), zap.String("event_id", event.EventID))
+		logger.Logger.Error("Failed to publish event", zap.Error(err), zap.String("call_id", event.CallID), zap.String("domain", event.Domain))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	logger.Logger.Info("Event received and published",
-		zap.String("event_id", event.EventID),
+		zap.String("call_id", event.CallID),
 		zap.String("domain", event.Domain),
-		zap.String("type", event.Type),
+		zap.String("direction", event.Direction),
+		zap.String("state", event.State),
+		zap.String("status", event.Status),
 	)
 
 	w.WriteHeader(http.StatusAccepted)

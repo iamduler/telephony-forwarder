@@ -67,11 +67,12 @@ func (cs *ConsumerService) processMessage(msg *natsgo.Msg) {
 		deliveryAttempt = int(metadata.NumDelivered)
 	}
 
-	// Parse event to extract domain
+	// Parse event to extract domain and call_id for logging
 	var event struct {
-		EventID string `json:"event_id"`
-		Domain  string `json:"domain"`
-		Type    string `json:"type"`
+		CallID string `json:"call_id"`
+		Domain string `json:"domain"` // Required: used for routing
+		State  string `json:"state"`
+		Status string `json:"status"`
 	}
 	if err := json.Unmarshal(msg.Data, &event); err != nil {
 		logger.Logger.Error("Failed to parse event",
@@ -79,6 +80,19 @@ func (cs *ConsumerService) processMessage(msg *natsgo.Msg) {
 			zap.Int("delivery_attempt", deliveryAttempt),
 		)
 		// NAK the message to trigger redelivery
+		if err := cs.consumer.Nak(msg); err != nil {
+			logger.Logger.Error("Failed to NAK message", zap.Error(err))
+		}
+		return
+	}
+
+	// Validate domain is present
+	if event.Domain == "" {
+		logger.Logger.Error("Event missing domain field",
+			zap.String("call_id", event.CallID),
+			zap.Int("delivery_attempt", deliveryAttempt),
+		)
+		// NAK the message - cannot route without domain
 		if err := cs.consumer.Nak(msg); err != nil {
 			logger.Logger.Error("Failed to NAK message", zap.Error(err))
 		}
@@ -93,9 +107,10 @@ func (cs *ConsumerService) processMessage(msg *natsgo.Msg) {
 	err = cs.forwarder.ForwardEvent(ctx, msg.Data, event.Domain, deliveryAttempt)
 	if err != nil {
 		logger.Logger.Error("Failed to forward event",
-			zap.String("event_id", event.EventID),
+			zap.String("call_id", event.CallID),
 			zap.String("domain", event.Domain),
-			zap.String("type", event.Type),
+			zap.String("state", event.State),
+			zap.String("status", event.Status),
 			zap.Int("delivery_attempt", deliveryAttempt),
 			zap.Error(err),
 		)
@@ -107,16 +122,17 @@ func (cs *ConsumerService) processMessage(msg *natsgo.Msg) {
 	// All endpoints succeeded - acknowledge the message
 	if err := cs.consumer.Ack(msg); err != nil {
 		logger.Logger.Error("Failed to acknowledge message",
-			zap.String("event_id", event.EventID),
+			zap.String("call_id", event.CallID),
 			zap.Error(err),
 		)
 		return
 	}
 
 	logger.Logger.Info("Event processed and acknowledged",
-		zap.String("event_id", event.EventID),
+		zap.String("call_id", event.CallID),
 		zap.String("domain", event.Domain),
-		zap.String("type", event.Type),
+		zap.String("state", event.State),
+		zap.String("status", event.Status),
 		zap.Int("delivery_attempt", deliveryAttempt),
 	)
 }
