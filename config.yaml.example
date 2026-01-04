@@ -1,0 +1,33 @@
+# Event Hub Configuration
+
+server:
+  port: 8080
+  read_timeout_seconds: 10
+  write_timeout_seconds: 10
+
+nats:
+  url: "nats://localhost:4222"
+  stream_name: "call-signals"
+  subject_pattern: "call.signal.*"
+  # ack_wait_seconds must be greater than backend timeout (3 seconds)
+  ack_wait_seconds: 10
+  max_deliveries: 3
+
+# Route configuration: maps domains to backend endpoints
+# Events are forwarded to ALL endpoints for a domain concurrently
+routes:
+  - domain: "event-hub.com"
+    endpoints:
+      - "https://backend1.example.com/webhook"
+      - "https://backend2.example.com/webhook"
+      - "https://backend3.example.com/webhook"
+  
+  - domain: "tenant1.example.com"
+    endpoints:
+      - "https://tenant1-backend.example.com/events"
+  
+  - domain: "tenant2.example.com"
+    endpoints:
+      - "https://tenant2-backend.example.com/events"
+      - "https://tenant2-backup.example.com/events"
+
