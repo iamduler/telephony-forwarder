@@ -11,10 +11,11 @@ import (
 
 // Publisher handles publishing events to NATS JetStream
 type Publisher struct {
-	conn      *nats.Conn
-	js        nats.JetStreamContext
-	subject   string
-	connected bool
+	conn       *nats.Conn
+	js         nats.JetStreamContext
+	subject    string
+	streamName string
+	connected  bool
 }
 
 // NewPublisher creates a new NATS publisher
@@ -76,10 +77,11 @@ func NewPublisher(url, streamName, subjectPattern string) (*Publisher, error) {
 	}
 
 	pub := &Publisher{
-		conn:      conn,
-		js:        js,
-		subject:   publishSubject,
-		connected: true,
+		conn:       conn,
+		js:         js,
+		subject:    publishSubject,
+		streamName: streamName,
+		connected:  true,
 	}
 
 	// Monitor connection status
@@ -116,5 +118,15 @@ func (p *Publisher) Close() {
 	if p.conn != nil {
 		p.conn.Close()
 	}
+}
+
+// GetJetStream returns the JetStream context (for reading messages)
+func (p *Publisher) GetJetStream() nats.JetStreamContext {
+	return p.js
+}
+
+// GetStreamName returns the stream name
+func (p *Publisher) GetStreamName() string {
+	return p.streamName
 }
 

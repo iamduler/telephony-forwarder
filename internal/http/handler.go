@@ -13,6 +13,8 @@ import (
 	"calleventhub/internal/nats"
 	"calleventhub/internal/store"
 
+	natsgo "github.com/nats-io/nats.go"
+
 	"go.uber.org/zap"
 )
 
@@ -22,7 +24,7 @@ var dashboardHTML embed.FS
 // Event represents the incoming event payload
 // This matches the actual telephony signaling event structure
 type Event struct {
-	ActualHotline         string `json:"actual_hotline"`
+	ActualHotline        string `json:"actual_hotline"`
 	Billsec              string `json:"billsec"`
 	CallID               string `json:"call_id"`
 	CRMContactID         string `json:"crm_contact_id"`
@@ -46,14 +48,14 @@ type Event struct {
 // Handler handles HTTP requests
 type Handler struct {
 	publisher *nats.Publisher
-	store    *store.Store
+	store     *store.Store
 }
 
 // NewHandler creates a new HTTP handler
 func NewHandler(publisher *nats.Publisher, eventStore *store.Store) *Handler {
 	return &Handler{
 		publisher: publisher,
-		store:    eventStore,
+		store:     eventStore,
 	}
 }
 
@@ -168,9 +170,9 @@ func (h *Handler) HandleGetEvents(w http.ResponseWriter, r *http.Request) {
 	stats := h.store.GetStats()
 
 	response := map[string]interface{}{
-		"events_by_domain":     eventsByDomain,
+		"events_by_domain":        eventsByDomain,
 		"failed_events_by_domain": failedEventsByDomain,
-		"stats":                stats,
+		"stats":                   stats,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -197,6 +199,129 @@ func (h *Handler) HandleGetStats(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(stats)
 }
 
+// StreamMessage represents a message in the NATS stream
+type StreamMessage struct {
+	Sequence     uint64                 `json:"sequence"`
+	Timestamp    time.Time              `json:"timestamp"`
+	Subject      string                 `json:"subject"`
+	Data         json.RawMessage        `json:"data"`
+	EventSummary map[string]interface{} `json:"event_summary,omitempty"`
+}
+
+// HandleGetStreamMessages handles GET /api/stream/messages - returns messages from NATS stream
+func (h *Handler) HandleGetStreamMessages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.publisher == nil {
+		http.Error(w, "NATS publisher not available", http.StatusInternalServerError)
+		return
+	}
+
+	// Get query parameters
+	limitStr := r.URL.Query().Get("limit")
+	limit := 100 // default
+	if limitStr != "" {
+		if parsed, err := fmt.Sscanf(limitStr, "%d", &limit); err != nil || parsed != 1 {
+			limit = 100
+		}
+		if limit > 1000 {
+			limit = 1000 // max limit
+		}
+		if limit < 1 {
+			limit = 1
+		}
+	}
+
+	js := h.publisher.GetJetStream()
+	streamName := h.publisher.GetStreamName()
+
+	// Get stream info
+	streamInfo, err := js.StreamInfo(streamName)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get stream info: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Get subject pattern from stream config
+	// Use the first subject from stream config, or default pattern
+	subjectPattern := "call.signal.*"
+	if len(streamInfo.Config.Subjects) > 0 {
+		subjectPattern = streamInfo.Config.Subjects[0]
+	}
+
+	// Create a temporary consumer to read messages
+	// Use DeliverAllPolicy to get all messages
+	consumerName := fmt.Sprintf("temp-reader-%d", time.Now().Unix())
+	consumerConfig := &natsgo.ConsumerConfig{
+		Name:          consumerName,
+		DeliverPolicy: natsgo.DeliverAllPolicy, // Read all messages
+		AckPolicy:     natsgo.AckNonePolicy,    // Don't need to ack for reading
+		MaxDeliver:    1,                       // Only deliver once
+	}
+
+	_, err = js.AddConsumer(streamName, consumerConfig)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create consumer: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer js.DeleteConsumer(streamName, consumerName) // Clean up
+
+	// Subscribe to read messages using subject pattern
+	sub, err := js.PullSubscribe(subjectPattern, consumerName, natsgo.ManualAck())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to subscribe: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer sub.Unsubscribe()
+
+	// Fetch messages
+	msgs, err := sub.Fetch(limit, natsgo.MaxWait(2*time.Second))
+	if err != nil && err != natsgo.ErrTimeout {
+		http.Error(w, fmt.Sprintf("Failed to fetch messages: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert messages to response format
+	result := make([]StreamMessage, 0, len(msgs))
+	for _, msg := range msgs {
+		metadata, _ := msg.Metadata()
+
+		streamMsg := StreamMessage{
+			Sequence:  metadata.Sequence.Stream,
+			Timestamp: metadata.Timestamp,
+			Subject:   msg.Subject,
+			Data:      msg.Data,
+		}
+
+		// Try to parse event data for summary
+		var eventData map[string]interface{}
+		if err := json.Unmarshal(msg.Data, &eventData); err == nil {
+			streamMsg.EventSummary = map[string]interface{}{
+				"call_id": eventData["call_id"],
+				"domain":  eventData["domain"],
+				"state":   eventData["state"],
+				"status":  eventData["status"],
+			}
+		}
+
+		result = append(result, streamMsg)
+	}
+
+	response := map[string]interface{}{
+		"stream_name":    streamName,
+		"total_messages": streamInfo.State.Msgs,
+		"messages":       result,
+		"count":          len(result),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
 // Server wraps the HTTP server
 type Server struct {
 	httpServer *http.Server
@@ -206,13 +331,14 @@ type Server struct {
 // NewServer creates a new HTTP server
 func NewServer(port int, handler *Handler) *Server {
 	mux := http.NewServeMux()
-	
+
 	// API endpoints
 	mux.HandleFunc("/events", handler.HandleEvents)
 	mux.HandleFunc("/health", handler.HandleHealth)
 	mux.HandleFunc("/api/events", handler.HandleGetEvents)
 	mux.HandleFunc("/api/stats", handler.HandleGetStats)
-	
+	mux.HandleFunc("/api/stream/messages", handler.HandleGetStreamMessages)
+
 	// Serve dashboard
 	mux.HandleFunc("/", handler.HandleDashboard)
 
@@ -265,4 +391,3 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	logger.Logger.Info("Shutting down HTTP server")
 	return s.httpServer.Shutdown(ctx)
 }
-
