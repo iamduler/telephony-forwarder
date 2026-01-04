@@ -1,0 +1,29 @@
+# Test Configuration
+# Sử dụng file này để test với mock backend server
+
+server:
+  port: 8080
+  read_timeout_seconds: 10
+  write_timeout_seconds: 10
+
+nats:
+  url: "nats://localhost:4222"
+  stream_name: "call-signals"
+  subject_pattern: "call.signal.*"
+  ack_wait_seconds: 10
+  max_deliveries: 3
+
+# Route configuration cho testing
+# Thay đổi domain và endpoint để test
+routes:
+  - domain: "vietanh.cloudpro.vn"
+    endpoints:
+      # Mock backend server - chạy test_mock_server.py trên port 9000
+      - "http://localhost:9000/webhook"
+  
+  # Có thể thêm domain khác để test
+  - domain: "test.example.com"
+    endpoints:
+      - "http://localhost:9000/webhook"
+      - "http://localhost:9001/webhook"  # Có thể chạy nhiều mock servers
+
