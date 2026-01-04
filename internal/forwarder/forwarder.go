@@ -11,6 +11,7 @@ import (
 
 	"calleventhub/internal/config"
 	"calleventhub/internal/logger"
+	"calleventhub/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -21,16 +22,18 @@ type Forwarder struct {
 	client   *http.Client
 	attempts map[string]int // Track delivery attempts for logging
 	mu       sync.RWMutex
+	store    *store.Store // Store for tracking forwarded events
 }
 
 // NewForwarder creates a new forwarder
-func NewForwarder(cfg *config.Config) *Forwarder {
+func NewForwarder(cfg *config.Config, eventStore *store.Store) *Forwarder {
 	return &Forwarder{
 		config: cfg,
 		client: &http.Client{
 			Timeout: 3 * time.Second, // Backend timeout: 3 seconds
 		},
 		attempts: make(map[string]int),
+		store:    eventStore,
 	}
 }
 
@@ -103,6 +106,16 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 			zap.Int("failed_endpoints", len(errors)),
 			zap.Any("errors", errors),
 		)
+
+		// Store the failed event for dashboard
+		if f.store != nil {
+			errorMessages := make([]string, len(errors))
+			for i, err := range errors {
+				errorMessages[i] = err.Error()
+			}
+			f.store.AddFailedEvent(eventData, domain, callID, deliveryAttempt, f.config.NATS.MaxDeliveries, endpoints, errorMessages)
+		}
+
 		return fmt.Errorf("failed to forward to %d endpoint(s): %v", len(errors), errors)
 	}
 
@@ -114,6 +127,11 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 		zap.Int("delivery_attempt", deliveryAttempt),
 		zap.Int("endpoint_count", len(endpoints)),
 	)
+
+	// Store the forwarded event for dashboard
+	if f.store != nil {
+		f.store.AddEvent(eventData, domain, callID, deliveryAttempt, endpoints)
+	}
 
 	return nil
 }

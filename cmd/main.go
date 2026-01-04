@@ -14,6 +14,7 @@ import (
 	"calleventhub/internal/http"
 	"calleventhub/internal/logger"
 	"calleventhub/internal/nats"
+	"calleventhub/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -63,14 +64,17 @@ func main() {
 	}
 	defer natsConsumer.Close()
 
+	// Create event store (keep last 1000 events)
+	eventStore := store.NewStore(1000)
+
 	// Create forwarder
-	fwd := forwarder.NewForwarder(cfg)
+	fwd := forwarder.NewForwarder(cfg, eventStore)
 
 	// Create consumer service
 	consumerService := consumer.NewConsumerService(cfg, natsConsumer, fwd)
 
 	// Create HTTP handler
-	httpHandler := http.NewHandler(publisher)
+	httpHandler := http.NewHandler(publisher, eventStore)
 
 	// Create HTTP server
 	httpServer := http.NewServer(cfg.Server.Port, httpHandler)

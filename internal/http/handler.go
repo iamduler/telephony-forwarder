@@ -2,16 +2,22 @@ package http
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"time"
 
 	"calleventhub/internal/logger"
 	"calleventhub/internal/nats"
+	"calleventhub/internal/store"
 
 	"go.uber.org/zap"
 )
+
+//go:embed web/dashboard.html
+var dashboardHTML embed.FS
 
 // Event represents the incoming event payload
 // This matches the actual telephony signaling event structure
@@ -40,12 +46,14 @@ type Event struct {
 // Handler handles HTTP requests
 type Handler struct {
 	publisher *nats.Publisher
+	store    *store.Store
 }
 
 // NewHandler creates a new HTTP handler
-func NewHandler(publisher *nats.Publisher) *Handler {
+func NewHandler(publisher *nats.Publisher, eventStore *store.Store) *Handler {
 	return &Handler{
 		publisher: publisher,
+		store:    eventStore,
 	}
 }
 
@@ -113,6 +121,82 @@ func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"healthy"}`))
 }
 
+// HandleGetEvents handles GET /api/events - returns events grouped by domain
+func (h *Handler) HandleGetEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.store == nil {
+		http.Error(w, "Event store not available", http.StatusInternalServerError)
+		return
+	}
+
+	// Get domain filter and event type from query parameters
+	domain := r.URL.Query().Get("domain")
+	eventType := r.URL.Query().Get("type") // "success", "failed", or "" for all
+
+	var eventsByDomain map[string][]store.ForwardedEvent
+	var failedEventsByDomain map[string][]store.FailedEvent
+
+	if domain != "" {
+		// Filter by specific domain
+		if eventType != "failed" {
+			events := h.store.GetEventsByDomainFiltered(domain)
+			eventsByDomain = map[string][]store.ForwardedEvent{
+				domain: events,
+			}
+		}
+		if eventType != "success" {
+			failedEvents := h.store.GetFailedEventsByDomainFiltered(domain)
+			failedEventsByDomain = map[string][]store.FailedEvent{
+				domain: failedEvents,
+			}
+		}
+	} else {
+		// Get all events grouped by domain
+		if eventType != "failed" {
+			eventsByDomain = h.store.GetEventsByDomain()
+		}
+		if eventType != "success" {
+			failedEventsByDomain = h.store.GetFailedEventsByDomain()
+		}
+	}
+
+	// Get stats
+	stats := h.store.GetStats()
+
+	response := map[string]interface{}{
+		"events_by_domain":     eventsByDomain,
+		"failed_events_by_domain": failedEventsByDomain,
+		"stats":                stats,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// HandleGetStats handles GET /api/stats - returns statistics
+func (h *Handler) HandleGetStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.store == nil {
+		http.Error(w, "Event store not available", http.StatusInternalServerError)
+		return
+	}
+
+	stats := h.store.GetStats()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(stats)
+}
+
 // Server wraps the HTTP server
 type Server struct {
 	httpServer *http.Server
@@ -122,8 +206,15 @@ type Server struct {
 // NewServer creates a new HTTP server
 func NewServer(port int, handler *Handler) *Server {
 	mux := http.NewServeMux()
+	
+	// API endpoints
 	mux.HandleFunc("/events", handler.HandleEvents)
 	mux.HandleFunc("/health", handler.HandleHealth)
+	mux.HandleFunc("/api/events", handler.HandleGetEvents)
+	mux.HandleFunc("/api/stats", handler.HandleGetStats)
+	
+	// Serve dashboard
+	mux.HandleFunc("/", handler.HandleDashboard)
 
 	return &Server{
 		httpServer: &http.Server{
@@ -134,6 +225,33 @@ func NewServer(port int, handler *Handler) *Server {
 		},
 		handler: handler,
 	}
+}
+
+// HandleDashboard serves the dashboard HTML page
+func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Read embedded HTML file
+	htmlFS, err := fs.Sub(dashboardHTML, "web")
+	if err != nil {
+		logger.Logger.Error("Failed to read dashboard HTML", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	htmlContent, err := fs.ReadFile(htmlFS, "dashboard.html")
+	if err != nil {
+		logger.Logger.Error("Failed to read dashboard HTML", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(htmlContent)
 }
 
 // Start starts the HTTP server
