@@ -14,6 +14,7 @@ import (
 	"calleventhub/internal/store"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // Forwarder forwards events to backend endpoints
@@ -63,7 +64,8 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 
 	callID := event.CallID
 
-	logger.Logger.Info("Forwarding event",
+	// Use domain-aware logging if available
+	logger.LogWithDomain(zapcore.InfoLevel, "Forwarding event",
 		zap.String("call_id", callID),
 		zap.String("domain", domain),
 		zap.String("state", event.State),
@@ -71,6 +73,16 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 		zap.Int("delivery_attempt", deliveryAttempt),
 		zap.Int("endpoint_count", len(endpoints)),
 	)
+
+	// Add delivery_attempt to event payload
+	eventPayload, err := f.addDeliveryAttemptToPayload(eventData, deliveryAttempt)
+	if err != nil {
+		logger.Logger.Warn("Failed to add delivery_attempt to payload, using original payload",
+			zap.String("call_id", callID),
+			zap.Error(err),
+		)
+		eventPayload = eventData // Fallback to original payload
+	}
 
 	// Forward to all endpoints concurrently
 	var wg sync.WaitGroup
@@ -80,7 +92,7 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
-			if err := f.forwardToEndpoint(ctx, url, eventData, callID, domain, event.State, event.Status); err != nil {
+			if err := f.forwardToEndpoint(ctx, url, eventPayload, callID, domain, event.State, event.Status); err != nil {
 				errChan <- fmt.Errorf("endpoint %s failed: %w", url, err)
 			}
 		}(endpoint)
@@ -97,7 +109,7 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 	}
 
 	if len(errors) > 0 {
-		logger.Logger.Error("Event forwarding failed",
+		logger.LogWithDomain(zapcore.ErrorLevel, "Event forwarding failed",
 			zap.String("call_id", callID),
 			zap.String("domain", domain),
 			zap.String("state", event.State),
@@ -119,7 +131,7 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 		return fmt.Errorf("failed to forward to %d endpoint(s): %v", len(errors), errors)
 	}
 
-	logger.Logger.Info("Event forwarded successfully",
+	logger.LogWithDomain(zapcore.InfoLevel, "Event forwarded successfully",
 		zap.String("call_id", callID),
 		zap.String("domain", domain),
 		zap.String("state", event.State),
@@ -134,6 +146,26 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 	}
 
 	return nil
+}
+
+// addDeliveryAttemptToPayload adds delivery_attempt field to the event payload
+func (f *Forwarder) addDeliveryAttemptToPayload(eventData []byte, deliveryAttempt int) ([]byte, error) {
+	// Parse the event as a map to preserve all fields
+	var eventMap map[string]interface{}
+	if err := json.Unmarshal(eventData, &eventMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal event: %w", err)
+	}
+
+	// Add or update delivery_attempt field
+	eventMap["delivery_attempt"] = deliveryAttempt
+
+	// Marshal back to JSON
+	payload, err := json.Marshal(eventMap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	return payload, nil
 }
 
 // forwardToEndpoint forwards the event to a single endpoint

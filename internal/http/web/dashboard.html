@@ -379,11 +379,19 @@
             <h1>📊 Telephony Forwarder Dashboard</h1>
             <div class="controls">
                 <input type="text" id="domainFilter" class="filter-input" placeholder="🔍 Lọc theo domain...">
+                <input type="date" id="dateFilter" class="filter-input" style="max-width: 150px;" title="Chọn ngày (chỉ áp dụng khi đọc từ log files)">
                 <button class="btn btn-primary" onclick="loadEvents()">🔄 Refresh</button>
                 <div class="auto-refresh">
                     <label style="color: #333; font-size: 14px;">Auto-refresh:</label>
                     <label class="toggle-switch">
                         <input type="checkbox" id="autoRefresh" onchange="toggleAutoRefresh()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="auto-refresh" style="margin-left: 20px;">
+                    <label style="color: #333; font-size: 14px;">Đọc từ log files:</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="readFromLogs" onchange="toggleReadFromLogs()">
                         <span class="slider"></span>
                     </label>
                 </div>
@@ -466,6 +474,7 @@
         }
 
         let currentTab = 'success';
+        let readFromLogs = false;
 
         function renderEvents(eventsByDomain, failedEventsByDomain) {
             const container = document.getElementById('domainsContainer');
@@ -577,22 +586,46 @@
                                 `;
                             }).join('')}
                             ${failedEvents.map(event => {
+                                // Handle both in-memory store format and log file format
                                 let eventData = {};
-                                try {
-                                    eventData = typeof event.event === 'string' 
-                                        ? JSON.parse(event.event) 
-                                        : event.event;
-                                } catch (e) {
-                                    console.error('Error parsing failed event data:', e, event.event);
-                                    eventData = {};
+                                if (event.event) {
+                                    // From in-memory store: parse event.event
+                                    try {
+                                        eventData = typeof event.event === 'string' 
+                                            ? JSON.parse(event.event) 
+                                            : event.event;
+                                    } catch (e) {
+                                        console.error('Error parsing failed event data:', e, event.event);
+                                        eventData = {};
+                                    }
+                                } else {
+                                    // From log files: use direct fields
+                                    eventData = {
+                                        direction: event.direction,
+                                        state: event.state,
+                                        status: event.status,
+                                        from_number: event.from_number,
+                                        to_number: event.to_number,
+                                        hotline: event.hotline
+                                    };
                                 }
-                                const cardClass = event.will_retry ? 'retry' : 'failed';
+                                
+                                // Determine if will retry (from in-memory store) or based on delivery_attempt
+                                const willRetry = event.will_retry !== undefined 
+                                    ? event.will_retry 
+                                    : (event.delivery_attempt && event.max_deliveries && event.delivery_attempt < event.max_deliveries);
+                                
+                                const cardClass = willRetry ? 'retry' : 'failed';
+                                const attemptDisplay = event.max_deliveries 
+                                    ? `#${event.delivery_attempt}/${event.max_deliveries}`
+                                    : `#${event.delivery_attempt}`;
+                                
                                 return `
                                     <div class="event-card ${cardClass}">
                                         <div class="event-header">
                                             <div class="event-call-id">
-                                                ${event.will_retry ? '🔄' : '❌'} ${event.call_id || 'N/A'}
-                                                ${event.will_retry ? '<span class="badge badge-warning" style="margin-left: 8px;">Will Retry</span>' : ''}
+                                                ${willRetry ? '🔄' : '❌'} ${event.call_id || 'N/A'}
+                                                ${willRetry ? '<span class="badge badge-warning" style="margin-left: 8px;">Will Retry</span>' : ''}
                                             </div>
                                             <div class="event-time" title="${formatTime(event.failed_at)}">
                                                 ${formatRelativeTime(event.failed_at)}
@@ -601,25 +634,26 @@
                                         <div class="event-details">
                                             <div class="event-detail">
                                                 <div class="event-detail-label">Direction</div>
-                                                <div class="event-detail-value">${eventData.direction || 'N/A'}</div>
+                                                <div class="event-detail-value">${eventData.direction || event.direction || 'N/A'}</div>
                                             </div>
                                             <div class="event-detail">
                                                 <div class="event-detail-label">State</div>
-                                                <div class="event-detail-value">${getStateBadge(eventData.state || 'unknown')}</div>
+                                                <div class="event-detail-value">${getStateBadge(eventData.state || event.state || 'unknown')}</div>
                                             </div>
                                             <div class="event-detail">
                                                 <div class="event-detail-label">Status</div>
-                                                <div class="event-detail-value">${eventData.status || 'N/A'}</div>
+                                                <div class="event-detail-value">${eventData.status || event.status || 'N/A'}</div>
                                             </div>
                                             <div class="event-detail">
                                                 <div class="event-detail-label">Attempt</div>
-                                                <div class="event-detail-value">#${event.delivery_attempt}/${event.max_deliveries}</div>
+                                                <div class="event-detail-value">${attemptDisplay}</div>
                                             </div>
                                         </div>
-                                        ${event.error_messages && event.error_messages.length > 0 ? `
+                                        ${event.error || (event.error_messages && event.error_messages.length > 0) ? `
                                             <div class="error-messages">
                                                 <strong style="font-size: 12px; color: #721c24;">Errors:</strong>
-                                                ${event.error_messages.map(err => `<div class="error-message">${err}</div>`).join('')}
+                                                ${event.error ? `<div class="error-message">${event.error}</div>` : ''}
+                                                ${event.error_messages ? event.error_messages.map(err => `<div class="error-message">${err}</div>`).join('') : ''}
                                             </div>
                                         ` : ''}
                                         ${event.endpoints && event.endpoints.length > 0 ? `
@@ -648,18 +682,35 @@
         async function loadEvents() {
             const loading = document.getElementById('loading');
             const domainFilter = document.getElementById('domainFilter').value;
+            const dateFilter = document.getElementById('dateFilter').value;
 
             loading.style.display = 'block';
 
             try {
-                let url = '/api/events';
-                const params = new URLSearchParams();
-                if (domainFilter) {
-                    params.append('domain', domainFilter);
+                let url, params;
+                
+                if (readFromLogs) {
+                    // Read from log files
+                    url = '/api/logs';
+                    params = new URLSearchParams();
+                    if (domainFilter) {
+                        params.append('domain', domainFilter);
+                    }
+                    if (dateFilter) {
+                        params.append('date', dateFilter);
+                    }
+                } else {
+                    // Read from in-memory store
+                    url = '/api/events';
+                    params = new URLSearchParams();
+                    if (domainFilter) {
+                        params.append('domain', domainFilter);
+                    }
+                    if (currentTab !== 'all') {
+                        params.append('type', currentTab);
+                    }
                 }
-                if (currentTab !== 'all') {
-                    params.append('type', currentTab);
-                }
+                
                 if (params.toString()) {
                     url += '?' + params.toString();
                 }
@@ -677,7 +728,8 @@
                     console.log('API Response:', {
                         hasEvents: !!data.events_by_domain,
                         hasFailedEvents: !!data.failed_events_by_domain,
-                        stats: data.stats
+                        stats: data.stats,
+                        source: readFromLogs ? 'log files' : 'in-memory store'
                     });
                 }
 
@@ -735,6 +787,23 @@
             // Update tab buttons
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.add('active');
+            
+            // Reload events
+            loadEvents();
+        }
+
+        function toggleReadFromLogs() {
+            readFromLogs = document.getElementById('readFromLogs').checked;
+            const dateFilter = document.getElementById('dateFilter');
+            
+            // Show/hide date filter based on readFromLogs
+            dateFilter.style.display = readFromLogs ? 'block' : 'none';
+            
+            // Set default date to today if reading from logs
+            if (readFromLogs && !dateFilter.value) {
+                const today = new Date().toISOString().split('T')[0];
+                dateFilter.value = today;
+            }
             
             // Reload events
             loadEvents();

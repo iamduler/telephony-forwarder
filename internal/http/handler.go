@@ -1,12 +1,17 @@
 package http
 
 import (
+	"bufio"
 	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"calleventhub/internal/logger"
@@ -16,6 +21,7 @@ import (
 	natsgo "github.com/nats-io/nats.go"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 //go:embed web/dashboard.html
@@ -94,7 +100,7 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Logger.Info("Event received and published",
+	logger.LogWithDomain(zapcore.InfoLevel, "Event received and published",
 		zap.String("call_id", event.CallID),
 		zap.String("domain", event.Domain),
 		zap.String("direction", event.Direction),
@@ -338,6 +344,8 @@ func NewServer(port int, handler *Handler) *Server {
 	mux.HandleFunc("/api/events", handler.HandleGetEvents)
 	mux.HandleFunc("/api/stats", handler.HandleGetStats)
 	mux.HandleFunc("/api/stream/messages", handler.HandleGetStreamMessages)
+	mux.HandleFunc("/api/logs", handler.HandleGetLogs)
+	mux.HandleFunc("/api/logs/domains", handler.HandleGetLogDomains)
 
 	// Serve dashboard
 	mux.HandleFunc("/", handler.HandleDashboard)
@@ -378,6 +386,298 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write(htmlContent)
+}
+
+// LogEntry represents a parsed log entry from log files
+type LogEntry struct {
+	Timestamp       string                 `json:"timestamp"`
+	Level           string                 `json:"level"`
+	Message         string                 `json:"msg"`
+	CallID          string                 `json:"call_id,omitempty"`
+	Domain          string                 `json:"domain,omitempty"`
+	State           string                 `json:"state,omitempty"`
+	Status          string                 `json:"status,omitempty"`
+	Direction       string                 `json:"direction,omitempty"`
+	Error           string                 `json:"error,omitempty"`
+	DeliveryAttempt int                    `json:"delivery_attempt,omitempty"`
+	Fields          map[string]interface{} `json:"-"`
+}
+
+// HandleGetLogs handles GET /api/logs - reads logs from log files
+func (h *Handler) HandleGetLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get query parameters
+	domain := r.URL.Query().Get("domain")
+	date := r.URL.Query().Get("date")
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
+	}
+
+	logsDir := "logs"
+	if domain == "" {
+		// List all domains
+		domains, err := h.listLogDomains(logsDir)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to list domains: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		response := map[string]interface{}{
+			"domains": domains,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Read logs for specific domain and date
+	logs, err := h.readLogsFromFile(logsDir, domain, date)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read logs: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Group logs by domain
+	logsByDomain := make(map[string][]LogEntry)
+	for _, log := range logs {
+		if log.Domain != "" {
+			logsByDomain[log.Domain] = append(logsByDomain[log.Domain], log)
+		}
+	}
+
+	// Extract events from logs (look for "Event forwarded successfully" and "Failed to forward event")
+	eventsByDomain := make(map[string][]map[string]interface{})
+	failedEventsByDomain := make(map[string][]map[string]interface{})
+
+	for domain, entries := range logsByDomain {
+		for _, entry := range entries {
+			if entry.Message == "Event forwarded successfully" || entry.Message == "Forwarding event" {
+				deliveryAttempt := 1
+				if entry.DeliveryAttempt > 0 {
+					deliveryAttempt = entry.DeliveryAttempt
+				}
+				event := map[string]interface{}{
+					"call_id":          entry.CallID,
+					"domain":           entry.Domain,
+					"state":            entry.State,
+					"status":           entry.Status,
+					"direction":        entry.Direction,
+					"forwarded_at":     entry.Timestamp,
+					"delivery_attempt": deliveryAttempt,
+				}
+				eventsByDomain[domain] = append(eventsByDomain[domain], event)
+			} else if entry.Message == "Event forwarding failed" || entry.Message == "Failed to forward event" {
+				deliveryAttempt := 1
+				if entry.DeliveryAttempt > 0 {
+					deliveryAttempt = entry.DeliveryAttempt
+				}
+				event := map[string]interface{}{
+					"call_id":          entry.CallID,
+					"domain":           entry.Domain,
+					"state":            entry.State,
+					"status":           entry.Status,
+					"direction":        entry.Direction,
+					"failed_at":        entry.Timestamp,
+					"error":            entry.Error,
+					"delivery_attempt": deliveryAttempt,
+				}
+				failedEventsByDomain[domain] = append(failedEventsByDomain[domain], event)
+			}
+		}
+	}
+
+	// Calculate stats
+	totalSuccessful := 0
+	totalFailed := 0
+	for _, events := range eventsByDomain {
+		totalSuccessful += len(events)
+	}
+	for _, events := range failedEventsByDomain {
+		totalFailed += len(events)
+	}
+
+	response := map[string]interface{}{
+		"events_by_domain":        eventsByDomain,
+		"failed_events_by_domain": failedEventsByDomain,
+		"stats": map[string]interface{}{
+			"total_successful": totalSuccessful,
+			"total_failed":     totalFailed,
+			"total_events":     totalSuccessful + totalFailed,
+			"domains":          len(logsByDomain),
+		},
+		"date":   date,
+		"domain": domain,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// HandleGetLogDomains handles GET /api/logs/domains - lists available domains in logs
+func (h *Handler) HandleGetLogDomains(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	logsDir := "logs"
+	domains, err := h.listLogDomains(logsDir)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to list domains: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"domains": domains,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// listLogDomains lists all domains that have log files
+func (h *Handler) listLogDomains(logsDir string) ([]map[string]interface{}, error) {
+	var domains []map[string]interface{}
+
+	entries, err := os.ReadDir(logsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return domains, nil
+		}
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		domainDir := filepath.Join(logsDir, entry.Name())
+		logFiles, err := os.ReadDir(domainDir)
+		if err != nil {
+			continue
+		}
+
+		// Count log files and get latest date
+		var dates []string
+		for _, logFile := range logFiles {
+			if !logFile.IsDir() && strings.HasSuffix(logFile.Name(), ".log") {
+				date := strings.TrimSuffix(logFile.Name(), ".log")
+				if len(date) == 10 { // YYYY-MM-DD format
+					dates = append(dates, date)
+				}
+			}
+		}
+
+		if len(dates) > 0 {
+			sort.Sort(sort.Reverse(sort.StringSlice(dates)))
+			domains = append(domains, map[string]interface{}{
+				"domain":      entry.Name(),
+				"log_count":   len(dates),
+				"latest_date": dates[0],
+				"dates":       dates,
+			})
+		}
+	}
+
+	return domains, nil
+}
+
+// readLogsFromFile reads logs from a specific domain and date log file
+func (h *Handler) readLogsFromFile(logsDir, domain, date string) ([]LogEntry, error) {
+	// Sanitize domain name (same as logger does)
+	safeDomain := sanitizeDomain(domain)
+	logFile := filepath.Join(logsDir, safeDomain, fmt.Sprintf("%s.log", date))
+
+	file, err := os.Open(logFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []LogEntry{}, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	var logs []LogEntry
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var entry LogEntry
+		if err := json.Unmarshal(line, &entry); err != nil {
+			// Skip invalid JSON lines
+			continue
+		}
+
+		// Parse additional fields
+		var rawData map[string]interface{}
+		if err := json.Unmarshal(line, &rawData); err == nil {
+			entry.Fields = rawData
+			// Extract common fields
+			if callID, ok := rawData["call_id"].(string); ok {
+				entry.CallID = callID
+			}
+			if domain, ok := rawData["domain"].(string); ok {
+				entry.Domain = domain
+			}
+			if state, ok := rawData["state"].(string); ok {
+				entry.State = state
+			}
+			if status, ok := rawData["status"].(string); ok {
+				entry.Status = status
+			}
+			if direction, ok := rawData["direction"].(string); ok {
+				entry.Direction = direction
+			}
+			if errMsg, ok := rawData["error"].(string); ok {
+				entry.Error = errMsg
+			}
+			// Extract delivery_attempt (can be int or float64 from JSON)
+			if da, ok := rawData["delivery_attempt"]; ok {
+				switch v := da.(type) {
+				case float64:
+					entry.DeliveryAttempt = int(v)
+				case int:
+					entry.DeliveryAttempt = v
+				case int64:
+					entry.DeliveryAttempt = int(v)
+				}
+			}
+		}
+
+		logs = append(logs, entry)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return logs, nil
+}
+
+// sanitizeDomain sanitizes domain name for use in filesystem paths
+func sanitizeDomain(domain string) string {
+	safe := strings.ReplaceAll(domain, ".", "_")
+	safe = strings.ReplaceAll(safe, "/", "_")
+	safe = strings.ReplaceAll(safe, "\\", "_")
+	safe = strings.ReplaceAll(safe, ":", "_")
+	safe = strings.ReplaceAll(safe, "*", "_")
+	safe = strings.ReplaceAll(safe, "?", "_")
+	safe = strings.ReplaceAll(safe, "\"", "_")
+	safe = strings.ReplaceAll(safe, "<", "_")
+	safe = strings.ReplaceAll(safe, ">", "_")
+	safe = strings.ReplaceAll(safe, "|", "_")
+	return safe
 }
 
 // Start starts the HTTP server

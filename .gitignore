@@ -1,2 +1,4 @@
 config.yaml
 cmd/app
+logs/
+launch.json

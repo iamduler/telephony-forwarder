@@ -23,10 +23,12 @@ func main() {
 	// Parse command line flags
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	logFile := flag.String("log-file", "", "Path to log file (empty = stdout only, ignored if domain-logging is enabled)")
+	domainLogging := flag.Bool("domain-logging", true, "Enable domain-based logging (logs grouped by domain in logs/ directory)")
 	flag.Parse()
 
 	// Initialize logger
-	if err := logger.Init(*logLevel); err != nil {
+	if err := logger.Init(*logLevel, *logFile, *domainLogging); err != nil {
 		panic(err)
 	}
 	defer logger.Sync()
@@ -133,4 +135,3 @@ func main() {
 
 	logger.Logger.Info("Shutdown complete")
 }
-

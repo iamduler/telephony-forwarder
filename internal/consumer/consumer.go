@@ -12,6 +12,7 @@ import (
 
 	natsgo "github.com/nats-io/nats.go"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // ConsumerService consumes events from NATS and forwards them
@@ -106,7 +107,7 @@ func (cs *ConsumerService) processMessage(msg *natsgo.Msg) {
 	// Forward event to all endpoints
 	err = cs.forwarder.ForwardEvent(ctx, msg.Data, event.Domain, deliveryAttempt)
 	if err != nil {
-		logger.Logger.Error("Failed to forward event",
+		logger.LogWithDomain(zapcore.ErrorLevel, "Failed to forward event",
 			zap.String("call_id", event.CallID),
 			zap.String("domain", event.Domain),
 			zap.String("state", event.State),
