@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"calleventhub/internal/config"
+	"calleventhub/internal/forwarder"
 	"calleventhub/internal/logger"
 	"calleventhub/internal/nats"
 	"calleventhub/internal/store"
@@ -54,17 +55,21 @@ type Event struct {
 
 // Handler handles HTTP requests
 type Handler struct {
-	publisher *nats.Publisher
-	store     *store.Store
-	config    *config.Config
+	publisher  *nats.Publisher
+	store      *store.Store
+	config     *config.Config
+	forwarder  *forwarder.Forwarder
+	configPath string
 }
 
 // NewHandler creates a new HTTP handler
-func NewHandler(publisher *nats.Publisher, eventStore *store.Store, cfg *config.Config) *Handler {
+func NewHandler(publisher *nats.Publisher, eventStore *store.Store, cfg *config.Config, fwd *forwarder.Forwarder, configPath string) *Handler {
 	return &Handler{
-		publisher: publisher,
-		store:     eventStore,
-		config:    cfg,
+		publisher:  publisher,
+		store:      eventStore,
+		config:     cfg,
+		forwarder:  fwd,
+		configPath: configPath,
 	}
 }
 
@@ -349,6 +354,7 @@ func NewServer(port int, handler *Handler) *Server {
 	mux.HandleFunc("/api/stream/messages", handler.HandleGetStreamMessages)
 	mux.HandleFunc("/api/logs", handler.HandleGetLogs)
 	mux.HandleFunc("/api/logs/domains", handler.HandleGetLogDomains)
+	mux.HandleFunc("/api/config/reload", handler.HandleReloadConfig)
 
 	// Serve dashboard
 	mux.HandleFunc("/", handler.HandleDashboard)
@@ -589,6 +595,49 @@ func (h *Handler) HandleGetLogDomains(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+}
+
+// HandleReloadConfig handles POST /api/config/reload - reloads configuration from file
+func (h *Handler) HandleReloadConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.forwarder == nil {
+		http.Error(w, "Forwarder not available", http.StatusInternalServerError)
+		return
+	}
+
+	if h.configPath == "" {
+		http.Error(w, "Config path not configured", http.StatusInternalServerError)
+		return
+	}
+
+	// Reload config
+	if err := h.forwarder.ReloadConfig(h.configPath); err != nil {
+		logger.Logger.Error("Failed to reload config", zap.Error(err))
+		http.Error(w, fmt.Sprintf("Failed to reload config: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Update handler's config reference
+	h.config = h.forwarder.GetConfig()
+
+	response := map[string]interface{}{
+		"status":  "success",
+		"message": "Configuration reloaded successfully",
+		"routes":  len(h.config.Routes),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// UpdateConfig updates the handler's config reference (used by file watcher)
+func (h *Handler) UpdateConfig(cfg *config.Config) {
+	h.config = cfg
 }
 
 // listLogDomains lists all domains that have log files

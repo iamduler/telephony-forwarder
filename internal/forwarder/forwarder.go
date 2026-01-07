@@ -39,7 +39,7 @@ func NewForwarder(cfg *config.Config, eventStore *store.Store) *Forwarder {
 }
 
 // ForwardEvent forwards an event to all configured endpoints for the domain
-// 
+//
 // Behavior:
 // - Forwards to ALL endpoints concurrently (parallel HTTP requests)
 // - If ANY endpoint fails (non-2xx response or timeout), returns error
@@ -47,7 +47,10 @@ func NewForwarder(cfg *config.Config, eventStore *store.Store) *Forwarder {
 // - JetStream will redeliver the entire message after ack_wait expires
 // - Backend endpoints MUST be idempotent based on call_id
 func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain string, deliveryAttempt int) error {
+	f.mu.RLock()
 	endpoints := f.config.GetEndpoints(domain)
+	maxDeliveries := f.config.NATS.MaxDeliveries
+	f.mu.RUnlock()
 	if len(endpoints) == 0 {
 		return fmt.Errorf("no endpoints configured for domain: %s", domain)
 	}
@@ -88,7 +91,7 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(endpoints))
 
-		for _, endpoint := range endpoints {
+	for _, endpoint := range endpoints {
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
@@ -125,7 +128,7 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 			for i, err := range errors {
 				errorMessages[i] = err.Error()
 			}
-			f.store.AddFailedEvent(eventData, domain, callID, deliveryAttempt, f.config.NATS.MaxDeliveries, endpoints, errorMessages)
+			f.store.AddFailedEvent(eventData, domain, callID, deliveryAttempt, maxDeliveries, endpoints, errorMessages)
 		}
 
 		return fmt.Errorf("failed to forward to %d endpoint(s): %v", len(errors), errors)
@@ -146,6 +149,39 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 	}
 
 	return nil
+}
+
+// ReloadConfig reloads the configuration from the specified file path
+func (f *Forwarder) ReloadConfig(configPath string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Load new config
+	newCfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to reload config: %w", err)
+	}
+
+	// Validate new config
+	if err := newCfg.Validate(); err != nil {
+		return fmt.Errorf("invalid reloaded config: %w", err)
+	}
+
+	// Update config atomically
+	f.config = newCfg
+
+	logger.Logger.Info("Configuration reloaded successfully",
+		zap.Int("route_count", len(newCfg.Routes)),
+	)
+
+	return nil
+}
+
+// GetConfig returns a copy of the current configuration (for read-only access)
+func (f *Forwarder) GetConfig() *config.Config {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.config
 }
 
 // addDeliveryAttemptToPayload adds delivery_attempt field to the event payload
@@ -208,4 +244,3 @@ func (f *Forwarder) forwardToEndpoint(ctx context.Context, url string, eventData
 
 	return nil
 }
-

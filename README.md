@@ -13,6 +13,7 @@ A production-ready Golang service that acts as a public HTTP ingress and telepho
 - **Domain-based Logging**: Logs grouped by domain with automatic rotation
 - **Event Tracking**: In-memory store for successful and failed events
 - **Log File Reading**: Read and parse events from log files via API
+- **Hot Reload Config**: Automatically reload route configuration without restarting
 - **Graceful Shutdown**: Handles SIGINT/SIGTERM cleanly
 
 ## Architecture
@@ -70,6 +71,63 @@ routes:
       - "https://backend1.example.com/webhook"
       - "https://backend2.example.com/webhook"
 ```
+
+### Hot Reload Configuration
+
+The application supports hot reloading of route configuration without restarting:
+
+#### Automatic Reload (File Watcher)
+
+- The application automatically watches the config file for changes
+- When you modify `config.yaml`, changes are detected within 2 seconds
+- Only the `routes` section is reloaded automatically
+- No restart required - just save the file!
+
+**Example:**
+```bash
+# Edit config.yaml to add/remove/modify routes
+vim config.yaml
+
+# Save the file - changes are automatically applied within 2 seconds
+# Check logs to confirm reload:
+# {"level":"info","msg":"Config auto-reloaded successfully","route_count":3}
+```
+
+#### Manual Reload via API
+
+You can also trigger a reload manually via API:
+
+```bash
+curl -X POST http://localhost:8080/api/config/reload
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "message": "Configuration reloaded successfully",
+  "routes": 2
+}
+```
+
+#### What Gets Reloaded
+
+✅ **Reloaded automatically:**
+- `routes` section (domain → endpoints mapping)
+- Adding new domains
+- Removing domains
+- Modifying endpoints for existing domains
+
+❌ **Requires restart:**
+- `server` configuration (port, timeouts)
+- `nats` configuration (URL, stream name, subject pattern, ack_wait, max_deliveries)
+
+#### Reload Behavior
+
+- **Thread-safe**: Config updates are atomic and thread-safe
+- **Validation**: Config is validated before applying changes
+- **Error handling**: Invalid configs are rejected, old config remains active
+- **Logging**: All reload events are logged with route count
 
 ## Building
 
@@ -291,6 +349,25 @@ Reads messages directly from the NATS JetStream stream.
 ### GET /
 
 Web dashboard for monitoring events, statistics, and logs.
+
+### POST /api/config/reload
+
+Reloads the configuration file (routes mapping) without restarting the application.
+
+**Response:**
+```json
+{
+  "status": "success",
+  "message": "Configuration reloaded successfully",
+  "routes": 2
+}
+```
+
+**Note**: Only the `routes` section (domain mapping) is reloaded. Changes to `server` or `nats` configuration require a restart.
+
+**Error Response:**
+- `400 Bad Request`: Invalid configuration file
+- `500 Internal Server Error`: Failed to reload config
 
 ## Event Forwarding
 

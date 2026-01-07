@@ -76,7 +76,7 @@ func main() {
 	consumerService := consumer.NewConsumerService(cfg, natsConsumer, fwd)
 
 	// Create HTTP handler
-	httpHandler := http.NewHandler(publisher, eventStore, cfg)
+	httpHandler := http.NewHandler(publisher, eventStore, cfg, fwd, *configPath)
 
 	// Create HTTP server
 	httpServer := http.NewServer(cfg.Server.Port, httpHandler)
@@ -96,6 +96,9 @@ func main() {
 			httpErrChan <- err
 		}
 	}()
+
+	// Start config file watcher in background
+	go watchConfigFile(*configPath, fwd, httpHandler)
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
@@ -134,4 +137,48 @@ func main() {
 	}
 
 	logger.Logger.Info("Shutdown complete")
+}
+
+// watchConfigFile watches the config file for changes and automatically reloads
+func watchConfigFile(configPath string, fwd *forwarder.Forwarder, handler *http.Handler) {
+	// Get initial file modification time
+	initialStat, err := os.Stat(configPath)
+	if err != nil {
+		logger.Logger.Warn("Failed to stat config file for watching", zap.String("path", configPath), zap.Error(err))
+		return
+	}
+	lastModTime := initialStat.ModTime()
+
+	// Check file every 2 seconds
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		stat, err := os.Stat(configPath)
+		if err != nil {
+			logger.Logger.Warn("Failed to stat config file", zap.String("path", configPath), zap.Error(err))
+			continue
+		}
+
+		// Check if file was modified
+		if stat.ModTime().After(lastModTime) {
+			lastModTime = stat.ModTime()
+			logger.Logger.Info("Config file changed, reloading...", zap.String("path", configPath))
+
+			// Reload config
+			if err := fwd.ReloadConfig(configPath); err != nil {
+				logger.Logger.Error("Failed to auto-reload config", zap.String("path", configPath), zap.Error(err))
+				continue
+			}
+
+			// Update handler's config reference
+			// Note: We need to access handler's internal fields, so we'll use a method
+			handler.UpdateConfig(fwd.GetConfig())
+
+			logger.Logger.Info("Config auto-reloaded successfully",
+				zap.String("path", configPath),
+				zap.Int("route_count", len(fwd.GetConfig().Routes)),
+			)
+		}
+	}
 }
