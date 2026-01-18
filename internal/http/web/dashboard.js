@@ -232,8 +232,7 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
     $container.html(html || `
         <div class="empty-state">
             <div class="empty-state-icon">🔍</div>
-            <h2>Không tìm thấy domain nào</h2>
-            <p>Thử tìm kiếm với từ khóa khác</p>
+            <h2>Không tìm thấy events nào</h2>
         </div>
     `);
 }
