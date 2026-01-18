@@ -37,7 +37,7 @@ Collection đã có sẵn các requests:
 - **Domain**: `vietanh.cloudpro.vn` (phải khớp với config.yaml)
 - **Mục đích**: Test forward thành công
 - **Kỳ vọng**: 
-  - HTTP 202 Accepted
+  - HTTP 200 OK
   - Response: `{"status":"accepted"}`
   - Mock backend server nhận được event
 
@@ -52,7 +52,7 @@ Collection đã có sẵn các requests:
 - **Domain**: `unknown.domain.com` (không có trong config)
 - **Mục đích**: Test khi domain không có route
 - **Kỳ vọng**: 
-  - HTTP 202 (event vẫn được publish)
+  - HTTP 200 (event vẫn được publish)
   - Nhưng không có endpoint nào nhận được (check logs)
 
 #### 5. **Send Event - Answered Call**
@@ -83,7 +83,7 @@ Collection đã có sẵn các requests:
 3. **Trong Postman**:
    - Chọn request **"Send Event - Success"**
    - Click **Send**
-   - Kiểm tra response (phải là HTTP 202)
+   - Kiểm tra response (phải là HTTP 200)
    - Kiểm tra Mock Backend Server terminal (phải thấy event được nhận)
 
 ### Test với dữ liệu tùy chỉnh:
@@ -159,7 +159,7 @@ Bạn có thể thêm variables khác:
 ## Kiểm tra kết quả
 
 ### 1. Response từ Postman:
-- **HTTP 202 Accepted**: ✅ Event đã được nhận và publish vào NATS
+- **HTTP 200 OK**: ✅ Event đã được nhận và publish vào NATS
 - **HTTP 400 Bad Request**: ❌ Payload không hợp lệ
 - **HTTP 500 Internal Server Error**: ❌ Lỗi server (check logs)
 
@@ -212,8 +212,8 @@ Xem logs để kiểm tra:
 
 3. **Tạo Tests** để tự động verify response:
    ```javascript
-   pm.test("Status code is 202", function () {
-       pm.response.to.have.status(202);
+   pm.test("Status code is 200", function () {
+       pm.response.to.have.status(200);
    });
    
    pm.test("Response has status accepted", function () {

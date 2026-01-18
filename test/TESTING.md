@@ -97,7 +97,7 @@ curl -X POST http://localhost:8080/events \
 ### Bước 5: Kiểm tra kết quả
 
 #### 1. Kiểm tra response từ event-hub
-- **HTTP 202 Accepted**: Event đã được nhận và publish vào NATS ✅
+- **HTTP 200 OK**: Event đã được nhận và publish vào NATS ✅
 - **HTTP 400 Bad Request**: Payload không hợp lệ hoặc thiếu `domain` ❌
 - **HTTP 500 Internal Server Error**: Lỗi khi publish vào NATS ❌
 

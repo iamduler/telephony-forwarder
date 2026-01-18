@@ -263,7 +263,7 @@ The service accepts any JSON structure. All fields are preserved and logged. Exa
 - All event data is logged in full for later inspection
 
 **Response:**
-- `202 Accepted`: Event accepted and published to JetStream
+- `200 OK`: Event accepted and published to JetStream
 - `400 Bad Request`: Invalid payload or missing `domain` field
 - `500 Internal Server Error`: Failed to publish to JetStream
 

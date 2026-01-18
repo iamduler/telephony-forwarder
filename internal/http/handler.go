@@ -130,13 +130,17 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 	// Log full event data with all fields from any PBX system
 	// This log is written BEFORE forwarding, so you can check how many events
 	// were actually received from the PBX system
+	// IMPORTANT: If you see multiple "Event received and published" logs for the same call_id,
+	// it means the PBX is sending the same event multiple times, NOT that the app is duplicating it
 	logger.LogWithDomain(zapcore.InfoLevel, "Event received and published",
 		zap.String("call_id", callID),
 		zap.String("domain", domain),
+		zap.String("state", getStringFromMap(eventMap, "state")),
+		zap.String("status", getStringFromMap(eventMap, "status")),
 		zap.Any("event", eventMap), // Log full event data with all fields
 	)
 
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"accepted"}`))
 }
 
@@ -1009,12 +1013,23 @@ func (h *Handler) readLogsFromFile(logsDir, domain, date string) ([]LogEntry, er
 	return logs, nil
 }
 
+// getStringFromMap safely extracts a string value from a map
+func getStringFromMap(m map[string]interface{}, key string) string {
+	if m == nil {
+		return ""
+	}
+	if val, ok := m[key].(string); ok {
+		return val
+	}
+	return ""
+}
+
 // getTimestampFromEvent extracts timestamp from event map and returns as time.Time
 // Returns zero time if timestamp cannot be parsed
 func getTimestampFromEvent(event map[string]interface{}) time.Time {
 	// Try different timestamp field names
 	timestampFields := []string{"timestamp", "forwarded_at", "failed_at"}
-	
+
 	for _, field := range timestampFields {
 		if ts, ok := event[field]; ok {
 			if tsStr, ok := ts.(string); ok {
@@ -1025,7 +1040,7 @@ func getTimestampFromEvent(event map[string]interface{}) time.Time {
 					"2006-01-02T15:04:05.000Z07:00", // Custom format with milliseconds
 					"2006-01-02T15:04:05Z",          // UTC without timezone offset
 				}
-				
+
 				for _, format := range formats {
 					if t, err := time.Parse(format, tsStr); err == nil {
 						return t
@@ -1034,7 +1049,7 @@ func getTimestampFromEvent(event map[string]interface{}) time.Time {
 			}
 		}
 	}
-	
+
 	// Return zero time if cannot parse
 	return time.Time{}
 }

@@ -64,8 +64,24 @@ func (cs *ConsumerService) processMessage(msg *natsgo.Msg) {
 	// Extract metadata for logging
 	metadata, err := msg.Metadata()
 	deliveryAttempt := 1
+	sequence := uint64(0)
 	if err == nil && metadata != nil {
 		deliveryAttempt = int(metadata.NumDelivered)
+		sequence = metadata.Sequence.Stream
+	}
+
+	// Log message received with sequence and delivery attempt for debugging
+	if metadata != nil {
+		logger.Logger.Info("Message received from NATS",
+			zap.Uint64("sequence", sequence),
+			zap.Int("delivery_attempt", deliveryAttempt),
+			zap.Uint64("num_pending", metadata.NumPending),
+		)
+	} else {
+		logger.Logger.Info("Message received from NATS",
+			zap.Uint64("sequence", sequence),
+			zap.Int("delivery_attempt", deliveryAttempt),
+		)
 	}
 
 	// Parse event to extract domain and call_id for logging
@@ -78,6 +94,7 @@ func (cs *ConsumerService) processMessage(msg *natsgo.Msg) {
 	if err := json.Unmarshal(msg.Data, &event); err != nil {
 		logger.Logger.Error("Failed to parse event",
 			zap.Error(err),
+			zap.Uint64("sequence", sequence),
 			zap.Int("delivery_attempt", deliveryAttempt),
 		)
 		// NAK the message to trigger redelivery
@@ -91,6 +108,7 @@ func (cs *ConsumerService) processMessage(msg *natsgo.Msg) {
 	if event.Domain == "" {
 		logger.Logger.Error("Event missing domain field",
 			zap.String("call_id", event.CallID),
+			zap.Uint64("sequence", sequence),
 			zap.Int("delivery_attempt", deliveryAttempt),
 		)
 		// NAK the message - cannot route without domain
@@ -99,6 +117,14 @@ func (cs *ConsumerService) processMessage(msg *natsgo.Msg) {
 		}
 		return
 	}
+
+	// Log processing start with sequence for tracking
+	logger.Logger.Info("Processing message",
+		zap.String("call_id", event.CallID),
+		zap.String("domain", event.Domain),
+		zap.Uint64("sequence", sequence),
+		zap.Int("delivery_attempt", deliveryAttempt),
+	)
 
 	// Create context with timeout for forwarding
 	ctx, cancel := context.WithTimeout(cs.ctx, 3*time.Second)
@@ -112,11 +138,18 @@ func (cs *ConsumerService) processMessage(msg *natsgo.Msg) {
 			zap.String("domain", event.Domain),
 			zap.String("state", event.State),
 			zap.String("status", event.Status),
+			zap.Uint64("sequence", sequence),
 			zap.Int("delivery_attempt", deliveryAttempt),
 			zap.Error(err),
 		)
 		// DO NOT acknowledge - let JetStream redeliver after ack_wait expires
 		// The message will be redelivered automatically by JetStream
+		// This will cause delivery_attempt to increase on next delivery
+		logger.Logger.Warn("Message will be redelivered by JetStream",
+			zap.String("call_id", event.CallID),
+			zap.Uint64("sequence", sequence),
+			zap.Int("current_attempt", deliveryAttempt),
+		)
 		return
 	}
 
@@ -124,6 +157,7 @@ func (cs *ConsumerService) processMessage(msg *natsgo.Msg) {
 	if err := cs.consumer.Ack(msg); err != nil {
 		logger.Logger.Error("Failed to acknowledge message",
 			zap.String("call_id", event.CallID),
+			zap.Uint64("sequence", sequence),
 			zap.Error(err),
 		)
 		return
@@ -134,6 +168,7 @@ func (cs *ConsumerService) processMessage(msg *natsgo.Msg) {
 		zap.String("domain", event.Domain),
 		zap.String("state", event.State),
 		zap.String("status", event.Status),
+		zap.Uint64("sequence", sequence),
 		zap.Int("delivery_attempt", deliveryAttempt),
 	)
 }
