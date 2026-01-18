@@ -196,6 +196,18 @@ func (h *Handler) HandleGetEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Sort events by timestamp (newest first) for each domain
+	for domain := range eventsByDomain {
+		sort.Slice(eventsByDomain[domain], func(i, j int) bool {
+			return eventsByDomain[domain][i].ForwardedAt.After(eventsByDomain[domain][j].ForwardedAt)
+		})
+	}
+	for domain := range failedEventsByDomain {
+		sort.Slice(failedEventsByDomain[domain], func(i, j int) bool {
+			return failedEventsByDomain[domain][i].FailedAt.After(failedEventsByDomain[domain][j].FailedAt)
+		})
+	}
+
 	// Get stats
 	stats := h.store.GetStats()
 
@@ -724,6 +736,22 @@ func (h *Handler) HandleGetLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Sort events by timestamp (newest first) for each domain
+	for domain := range eventsByDomain {
+		sort.Slice(eventsByDomain[domain], func(i, j int) bool {
+			tsI := getTimestampFromEvent(eventsByDomain[domain][i])
+			tsJ := getTimestampFromEvent(eventsByDomain[domain][j])
+			return tsI.After(tsJ) // Newest first
+		})
+	}
+	for domain := range failedEventsByDomain {
+		sort.Slice(failedEventsByDomain[domain], func(i, j int) bool {
+			tsI := getTimestampFromEvent(failedEventsByDomain[domain][i])
+			tsJ := getTimestampFromEvent(failedEventsByDomain[domain][j])
+			return tsI.After(tsJ) // Newest first
+		})
+	}
+
 	// Calculate stats
 	totalSuccessful := 0
 	totalFailed := 0
@@ -975,6 +1003,36 @@ func (h *Handler) readLogsFromFile(logsDir, domain, date string) ([]LogEntry, er
 	}
 
 	return logs, nil
+}
+
+// getTimestampFromEvent extracts timestamp from event map and returns as time.Time
+// Returns zero time if timestamp cannot be parsed
+func getTimestampFromEvent(event map[string]interface{}) time.Time {
+	// Try different timestamp field names
+	timestampFields := []string{"timestamp", "forwarded_at", "failed_at"}
+	
+	for _, field := range timestampFields {
+		if ts, ok := event[field]; ok {
+			if tsStr, ok := ts.(string); ok {
+				// Try different timestamp formats
+				formats := []string{
+					time.RFC3339,                    // 2006-01-02T15:04:05Z07:00
+					time.RFC3339Nano,                // 2006-01-02T15:04:05.999999999Z07:00
+					"2006-01-02T15:04:05.000Z07:00", // Custom format with milliseconds
+					"2006-01-02T15:04:05Z",          // UTC without timezone offset
+				}
+				
+				for _, format := range formats {
+					if t, err := time.Parse(format, tsStr); err == nil {
+						return t
+					}
+				}
+			}
+		}
+	}
+	
+	// Return zero time if cannot parse
+	return time.Time{}
 }
 
 // sanitizeDomain sanitizes domain name for use in filesystem paths

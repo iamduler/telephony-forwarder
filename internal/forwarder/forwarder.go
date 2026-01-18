@@ -88,16 +88,19 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 	eventMap["delivery_attempt"] = deliveryAttempt
 
 	// Use domain-aware logging with full event data
+	// Log call_id and delivery_attempt to help debug duplicate forwarding issues
 	logger.LogWithDomain(zapcore.InfoLevel, "Forwarding event",
 		zap.String("domain", domain),
+		zap.String("call_id", callID),
+		zap.Int("delivery_attempt", deliveryAttempt),
 		zap.Int("endpoint_count", len(endpoints)),
 		zap.Any("event", eventMap), // Log full event data
 	)
 
-	// Add delivery_attempt to event payload
-	eventPayload, err := f.addDeliveryAttemptToPayload(eventData, deliveryAttempt)
+	// Add delivery_attempt and using_forwarder to event payload
+	eventPayload, err := f.enrichPayload(eventData, deliveryAttempt)
 	if err != nil {
-		logger.Logger.Warn("Failed to add delivery_attempt to payload, using original payload",
+		logger.Logger.Warn("Failed to enrich payload, using original payload",
 			zap.String("call_id", callID),
 			zap.Error(err),
 		)
@@ -118,7 +121,7 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(endpoints))
 
-		for _, endpoint := range endpoints {
+	for _, endpoint := range endpoints {
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
@@ -209,8 +212,8 @@ func (f *Forwarder) GetConfig() *config.Config {
 	return f.config
 }
 
-// addDeliveryAttemptToPayload adds delivery_attempt field to the event payload
-func (f *Forwarder) addDeliveryAttemptToPayload(eventData []byte, deliveryAttempt int) ([]byte, error) {
+// enrichPayload adds delivery_attempt and using_forwarder fields to the event payload
+func (f *Forwarder) enrichPayload(eventData []byte, deliveryAttempt int) ([]byte, error) {
 	// Parse the event as a map to preserve all fields
 	var eventMap map[string]interface{}
 	if err := json.Unmarshal(eventData, &eventMap); err != nil {
@@ -219,6 +222,9 @@ func (f *Forwarder) addDeliveryAttemptToPayload(eventData []byte, deliveryAttemp
 
 	// Add or update delivery_attempt field
 	eventMap["delivery_attempt"] = deliveryAttempt
+
+	// Add using_forwarder field to indicate this event is forwarded by the forwarder service
+	eventMap["using_forwarder"] = 1
 
 	// Marshal back to JSON
 	payload, err := json.Marshal(eventMap)

@@ -119,6 +119,13 @@ func NewConsumer(url, streamName, subjectPattern, consumerName string, ackWait, 
 	// For PUSH-based delivery with durable consumer, we need to use PullSubscribe
 	// with a continuous fetch loop to simulate PUSH behavior
 	// This is because NATS JetStream durable consumers are typically PULL-based
+	// IMPORTANT: When multiple instances use the same consumer name, NATS will
+	// distribute messages between subscriptions (load balancing). Each message
+	// will only be delivered to ONE subscription, not all of them.
+	// If you see duplicate processing, check:
+	// 1. Are there multiple consumers with different names?
+	// 2. Is the message being published multiple times?
+	// 3. Are there multiple instances running?
 	sub, err := js.PullSubscribe(subjectPattern, consumerName, nats.ManualAck())
 	if err != nil {
 		conn.Close()
