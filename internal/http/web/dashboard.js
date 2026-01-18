@@ -1,7 +1,6 @@
-// Dashboard JavaScript Logic
+// Dashboard JavaScript Logic (jQuery)
 let autoRefreshInterval = null;
 let currentTab = 'success';
-let readFromLogs = false;
 
 function formatTime(timestamp) {
     const date = new Date(timestamp);
@@ -37,8 +36,8 @@ function getStateBadge(state) {
 }
 
 function renderEvents(eventsByDomain, failedEventsByDomain) {
-    const container = document.getElementById('domainsContainer');
-    const domainFilter = document.getElementById('domainFilter').value.toLowerCase();
+    const $container = $('#domainsContainer');
+    const domainFilter = $('#domainFilter').val().toLowerCase();
 
     // Filter based on current tab
     let eventsToShow = {};
@@ -54,13 +53,13 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
     const hasEvents = Object.keys(eventsToShow).length > 0 || Object.keys(failedToShow).length > 0;
 
     if (!hasEvents) {
-        container.innerHTML = `
+        $container.html(`
             <div class="empty-state">
                 <div class="empty-state-icon">📭</div>
                 <h2>Chưa có events nào</h2>
                 <p>Gửi events để xem chúng ở đây</p>
             </div>
-        `;
+        `);
         return;
     }
 
@@ -230,108 +229,91 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
         `;
     });
 
-    container.innerHTML = html || `
+    $container.html(html || `
         <div class="empty-state">
             <div class="empty-state-icon">🔍</div>
             <h2>Không tìm thấy domain nào</h2>
             <p>Thử tìm kiếm với từ khóa khác</p>
         </div>
-    `;
+    `);
 }
 
-async function loadEvents() {
-    const loading = document.getElementById('loading');
-    const domainFilter = document.getElementById('domainFilter').value;
-    const dateFilter = document.getElementById('dateFilter').value;
+function loadEvents() {
+    const $loading = $('#loading');
+    const domainFilter = $('#domainFilter').val();
 
-    loading.style.display = 'block';
+    $loading.show();
 
-    try {
-        let url, params;
-        
-        if (readFromLogs) {
-            // Read from log files
-            url = '/api/logs';
-            params = new URLSearchParams();
-            if (domainFilter) {
-                params.append('domain', domainFilter);
-            }
-            if (dateFilter) {
-                params.append('date', dateFilter);
-            }
-        } else {
-            // Read from in-memory store
-            url = '/api/events';
-            params = new URLSearchParams();
-            if (domainFilter) {
-                params.append('domain', domainFilter);
-            }
-            if (currentTab !== 'all') {
-                params.append('type', currentTab);
-            }
-        }
-        
-        if (params.toString()) {
-            url += '?' + params.toString();
-        }
-        
-        const response = await fetch(url);
-        
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        const data = await response.json();
-        
-        // Debug: log data structure
-        if (data && typeof data === 'object') {
-            console.log('API Response:', {
-                hasEvents: !!data.events_by_domain,
-                hasFailedEvents: !!data.failed_events_by_domain,
-                stats: data.stats,
-                source: readFromLogs ? 'log files' : 'in-memory store'
-            });
-        }
-
-        // Update stats
-        if (data.stats) {
-            document.getElementById('totalSuccessful').textContent = data.stats.total_successful || 0;
-            document.getElementById('totalFailed').textContent = data.stats.total_failed || 0;
-            document.getElementById('retryCount').textContent = data.stats.retry_count || 0;
-            document.getElementById('totalDomains').textContent = data.stats.domains || 0;
-        }
-
-        // Render events
-        renderEvents(data.events_by_domain || {}, data.failed_events_by_domain || {});
-
-    } catch (error) {
-        console.error('Error loading events:', error);
-        let errorMessage = error.message || 'Unknown error';
-        
-        // Better error message for JSON parse errors
-        if (errorMessage.includes('JSON') || errorMessage.includes('parse')) {
-            errorMessage = 'Lỗi khi parse dữ liệu từ server. Vui lòng refresh lại trang.';
-        }
-        
-        document.getElementById('domainsContainer').innerHTML = `
-            <div class="empty-state">
-                <div class="empty-state-icon">❌</div>
-                <h2>Lỗi khi tải dữ liệu</h2>
-                <p>${errorMessage}</p>
-                <p style="margin-top: 12px; font-size: 12px; color: #6c757d;">
-                    Kiểm tra console để xem chi tiết lỗi (F12)
-                </p>
-            </div>
-        `;
-    } finally {
-        loading.style.display = 'none';
+    // Read from in-memory store
+    let url = '/api/events';
+    const params = new URLSearchParams();
+    if (domainFilter) {
+        params.append('domain', domainFilter);
     }
+    if (currentTab !== 'all') {
+        params.append('type', currentTab);
+    }
+    
+    if (params.toString()) {
+        url += '?' + params.toString();
+    }
+    
+    $.ajax({
+        url: url,
+        method: 'GET',
+        dataType: 'json',
+        success: function(data) {
+            // Debug: log data structure
+            if (data && typeof data === 'object') {
+                console.log('API Response:', {
+                    hasEvents: !!data.events_by_domain,
+                    hasFailedEvents: !!data.failed_events_by_domain,
+                    stats: data.stats,
+                    source: 'in-memory store'
+                });
+            }
+
+            // Update stats
+            if (data.stats) {
+                $('#totalSuccessful').text(data.stats.total_successful || 0);
+                $('#totalFailed').text(data.stats.total_failed || 0);
+                $('#retryCount').text(data.stats.retry_count || 0);
+                $('#totalDomains').text(data.stats.domains || 0);
+            }
+
+            // Render events
+            renderEvents(data.events_by_domain || {}, data.failed_events_by_domain || {});
+        },
+        error: function(xhr, status, error) {
+            console.error('Error loading events:', error);
+            let errorMessage = error || 'Unknown error';
+            
+            // Better error message for JSON parse errors
+            if (errorMessage.includes('JSON') || errorMessage.includes('parse')) {
+                errorMessage = 'Lỗi khi parse dữ liệu từ server. Vui lòng refresh lại trang.';
+            }
+            
+            $('#domainsContainer').html(`
+                <div class="empty-state">
+                    <div class="empty-state-icon">❌</div>
+                    <h2>Lỗi khi tải dữ liệu</h2>
+                    <p>${errorMessage}</p>
+                    <p style="margin-top: 12px; font-size: 12px; color: #6c757d;">
+                        Kiểm tra console để xem chi tiết lỗi (F12)
+                    </p>
+                </div>
+            `);
+        },
+        complete: function() {
+            $loading.hide();
+        }
+    });
 }
 
 function toggleAutoRefresh() {
-    const checkbox = document.getElementById('autoRefresh');
+    const $checkbox = $('#autoRefresh');
     
-    if (checkbox.checked) {
+    if ($checkbox.is(':checked')) {
         autoRefreshInterval = setInterval(loadEvents, 5000); // Refresh every 5 seconds
     } else {
         if (autoRefreshInterval) {
@@ -345,34 +327,17 @@ function switchTab(tab) {
     currentTab = tab;
     
     // Update tab buttons
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.add('active');
-    
-    // Reload events
-    loadEvents();
-}
-
-function toggleReadFromLogs() {
-    readFromLogs = document.getElementById('readFromLogs').checked;
-    const dateFilter = document.getElementById('dateFilter');
-    
-    // Show/hide date filter based on readFromLogs
-    dateFilter.style.display = readFromLogs ? 'block' : 'none';
-    
-    // Set default date to today if reading from logs
-    if (readFromLogs && !dateFilter.value) {
-        const today = new Date().toISOString().split('T')[0];
-        dateFilter.value = today;
-    }
+    $('.tab').removeClass('active');
+    $('#tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).addClass('active');
     
     // Reload events
     loadEvents();
 }
 
 // Initialize on page load
-document.addEventListener('DOMContentLoaded', function() {
+$(document).ready(function() {
     // Filter input handler
-    document.getElementById('domainFilter').addEventListener('input', function() {
+    $('#domainFilter').on('input', function() {
         loadEvents();
     });
 

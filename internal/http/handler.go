@@ -359,6 +359,9 @@ func NewServer(port int, handler *Handler) *Server {
 	// Serve static assets (JS, CSS, etc.)
 	mux.HandleFunc("/static/", handler.HandleStatic)
 
+	// Serve log viewer
+	mux.HandleFunc("/logs", handler.HandleLogsViewer)
+
 	// Serve dashboard (must be last to catch all other routes)
 	mux.HandleFunc("/", handler.HandleDashboard)
 
@@ -391,6 +394,33 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	htmlContent, err := fs.ReadFile(htmlFS, "dashboard.html")
 	if err != nil {
 		logger.Logger.Error("Failed to read dashboard HTML", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(htmlContent)
+}
+
+// HandleLogsViewer serves the log viewer HTML page
+func (h *Handler) HandleLogsViewer(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/logs" {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Read embedded HTML file
+	htmlFS, err := fs.Sub(webAssets, "web")
+	if err != nil {
+		logger.Logger.Error("Failed to read logs viewer HTML", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	htmlContent, err := fs.ReadFile(htmlFS, "logs.html")
+	if err != nil {
+		logger.Logger.Error("Failed to read logs viewer HTML", zap.Error(err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
