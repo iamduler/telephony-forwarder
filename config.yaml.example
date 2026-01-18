@@ -7,6 +7,7 @@ server:
 
 nats:
   url: "nats://localhost:4222"
+  # url: "nats://app:STRONG_PASSWORD@127.0.0.1:4222"
   stream_name: "call-signals"
   subject_pattern: "call.signal.*"
   # ack_wait_seconds must be greater than backend timeout (3 seconds)

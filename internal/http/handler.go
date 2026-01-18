@@ -370,6 +370,7 @@ func NewServer(port int, handler *Handler) *Server {
 	mux.HandleFunc("/api/stream/messages", handler.HandleGetStreamMessages)
 	mux.HandleFunc("/api/logs", handler.HandleGetLogs)
 	mux.HandleFunc("/api/logs/domains", handler.HandleGetLogDomains)
+	mux.HandleFunc("/api/config", handler.HandleGetConfig)
 	mux.HandleFunc("/api/config/reload", handler.HandleReloadConfig)
 
 	// Serve static assets (JS, CSS, etc.)
@@ -377,6 +378,9 @@ func NewServer(port int, handler *Handler) *Server {
 
 	// Serve log viewer
 	mux.HandleFunc("/logs", handler.HandleLogsViewer)
+
+	// Serve config viewer
+	mux.HandleFunc("/config", handler.HandleConfigViewer)
 
 	// Serve dashboard (must be last to catch all other routes)
 	mux.HandleFunc("/", handler.HandleDashboard)
@@ -437,6 +441,33 @@ func (h *Handler) HandleLogsViewer(w http.ResponseWriter, r *http.Request) {
 	htmlContent, err := fs.ReadFile(htmlFS, "logs.html")
 	if err != nil {
 		logger.Logger.Error("Failed to read logs viewer HTML", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(htmlContent)
+}
+
+// HandleConfigViewer serves the config viewer HTML page
+func (h *Handler) HandleConfigViewer(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/config" {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Read embedded HTML file
+	htmlFS, err := fs.Sub(webAssets, "web")
+	if err != nil {
+		logger.Logger.Error("Failed to read config viewer HTML", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	htmlContent, err := fs.ReadFile(htmlFS, "config.html")
+	if err != nil {
+		logger.Logger.Error("Failed to read config viewer HTML", zap.Error(err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -737,6 +768,42 @@ func (h *Handler) HandleGetLogDomains(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]interface{}{
 		"domains": domains,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// HandleGetConfig handles GET /api/config - returns current route configuration
+func (h *Handler) HandleGetConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.config == nil {
+		http.Error(w, "Configuration not available", http.StatusInternalServerError)
+		return
+	}
+
+	// Get current config from forwarder (may have been reloaded)
+	var routes []config.Route
+	if h.forwarder != nil {
+		cfg := h.forwarder.GetConfig()
+		if cfg != nil {
+			routes = cfg.Routes
+		} else {
+			routes = h.config.Routes
+		}
+	} else {
+		routes = h.config.Routes
+	}
+
+	// Build response with routes
+	response := map[string]interface{}{
+		"routes": routes,
+		"count":  len(routes),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

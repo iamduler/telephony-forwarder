@@ -32,8 +32,8 @@ type NATSConfig struct {
 
 // Route maps a domain to backend endpoints
 type Route struct {
-	Domain    string   `yaml:"domain"`
-	Endpoints []string `yaml:"endpoints"`
+	Domain    string   `yaml:"domain" json:"domain"`
+	Endpoints []string `yaml:"endpoints" json:"endpoints"`
 }
 
 // Load reads and parses the configuration file
