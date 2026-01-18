@@ -128,7 +128,11 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log full event data with all fields from any PBX system
+	// This log is written BEFORE forwarding, so you can check how many events
+	// were actually received from the PBX system
 	logger.LogWithDomain(zapcore.InfoLevel, "Event received and published",
+		zap.String("call_id", callID),
+		zap.String("domain", domain),
 		zap.Any("event", eventMap), // Log full event data with all fields
 	)
 
