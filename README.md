@@ -11,6 +11,7 @@ A production-ready Golang service that acts as a public HTTP ingress and telepho
 - **Health Checks**: Exposes GET `/health` endpoint
 - **Web Dashboard**: Real-time monitoring interface for events, statistics, and logs
 - **Log Viewer**: Standalone interface for viewing historical logs with domain and date selection
+- **Config Viewer**: Web interface to view and manage current route configuration
 - **Domain-based Logging**: Logs grouped by domain with automatic rotation
 - **Event Tracking**: In-memory store for successful and failed events
 - **Full Event Data Logging**: Preserves all fields from different PBX systems
@@ -27,10 +28,12 @@ HTTP Request → POST /events → NATS JetStream → Consumer → Forward to Bac
 
 1. Events are received via HTTP POST and validated
 2. Valid events are published to NATS JetStream (no blocking)
-3. A PUSH-based consumer receives messages from JetStream
+3. A durable consumer receives messages from JetStream (preserves position across restarts)
 4. Events are forwarded to ALL configured endpoints concurrently
 5. Message is acknowledged only if ALL endpoints succeed
 6. If ANY endpoint fails, JetStream redelivers the entire message
+
+**Note**: The consumer is durable and preserves its position. If a consumer already exists, it will be reused instead of being recreated, ensuring no messages are lost during application restarts.
 
 ## JetStream Retry and Backoff Behavior
 
@@ -137,6 +140,72 @@ curl -X POST http://localhost:8080/api/config/reload
 ```bash
 go mod download
 go build -o telephony-forwarder ./cmd/main.go
+```
+
+## Deployment
+
+The project includes a deployment script (`deploy.py`) for automated deployment:
+
+### Automated Deployment Script
+
+The `deploy.py` script automates the deployment process:
+
+**Features:**
+- **Git Integration**: Automatically checks for new commits from remote repository
+- **Smart Build**: Only rebuilds if there are new commits (unless `--force` is used)
+- **Service Management**: Automatically restarts the systemd service after build
+- **Logging**: Logs all deployment activities to `/var/log/telephony-forwarder/deploy.log`
+
+**Usage:**
+
+```bash
+# Basic deployment (checks for new commits, builds, and restarts service)
+python3 deploy.py
+
+# Force rebuild even if no new commits
+python3 deploy.py --force
+
+# Build only, do not restart service
+python3 deploy.py --no-restart
+
+# Combine flags
+python3 deploy.py --force --no-restart
+```
+
+**Configuration:**
+
+The script uses the following configuration (edit `deploy.py` to customize):
+- `PROJECT_DIR`: Project directory path (default: `/root/telephony-forwarder`)
+- `SERVICE_NAME`: Systemd service name (default: `telephony-forwarder`)
+- `BUILD_CMD`: Go build command (default: `["go", "build", "-o", "app", "./cmd"]`)
+- `LOG_FILE`: Deployment log file path (default: `/var/log/telephony-forwarder/deploy.log`)
+
+**How It Works:**
+
+1. Checks for new commits from remote repository using `git fetch` and `git status`
+2. If new commits are found (or `--force` is used):
+   - Pulls latest code from repository
+   - Builds the Go application
+   - Restarts the systemd service (unless `--no-restart` is used)
+3. Logs all operations to the deployment log file
+
+**Prerequisites:**
+
+- Python 3.x
+- Git repository initialized
+- Systemd service configured
+- Proper permissions to restart service
+
+**Example Output:**
+
+```
+📥 New commits detected → pulling...
+$ git pull
+...
+$ go build -o app ./cmd
+...
+$ systemctl restart telephony-forwarder
+🚀 Deploy completed successfully
 ```
 
 ## Running
@@ -389,6 +458,33 @@ Web dashboard for monitoring real-time events and statistics from in-memory stor
 
 Standalone log viewer interface for viewing historical logs from log files.
 
+### GET /api/config
+
+Returns the current route configuration.
+
+**Response:**
+```json
+{
+  "routes": [
+    {
+      "domain": "example.com",
+      "endpoints": [
+        "https://backend1.example.com/webhook",
+        "https://backend2.example.com/webhook"
+      ]
+    }
+  ],
+  "count": 1
+}
+```
+
+### GET /config
+
+Web interface for viewing and managing route configuration. Displays:
+- All configured routes with domains and endpoints
+- Total routes and endpoints count
+- Option to reload configuration from file
+
 ### POST /api/config/reload
 
 Reloads the configuration file (routes mapping) without restarting the application.
@@ -522,9 +618,9 @@ The service handles SIGINT and SIGTERM:
 - NATS Server with JetStream enabled
 - Backend endpoints must be idempotent
 
-## Web Dashboard
+## Web Interfaces
 
-The service includes two web interfaces:
+The service includes three web interfaces:
 
 ### Dashboard (`/`)
 
@@ -576,6 +672,28 @@ Standalone interface for viewing historical logs from log files.
 
 **Note**: The log viewer displays events as raw JSON to preserve all fields from different PBX systems. All timestamps are converted to local timezone for display.
 
+### Config Viewer (`/config`)
+
+Web interface for viewing and managing route configuration.
+
+**Features:**
+- **Route Display**: View all configured routes with domains and endpoints
+- **Statistics**: Display total routes and total endpoints count
+- **Reload Config**: Button to manually reload configuration from file
+- **Refresh**: Button to refresh the configuration view
+- **Navigation**: Links to Dashboard and Log Viewer
+
+**Usage:**
+1. Open browser to `http://localhost:8080/config`
+
+2. View all configured routes with their endpoints
+
+3. Click "Reload Config" to reload configuration from file (requires confirmation)
+
+4. Click "Refresh" to reload the view
+
+**Note**: The config viewer shows the current in-memory configuration. After reloading config, click "Refresh" to see the updated routes.
+
 ## Project Structure
 
 ```
@@ -591,7 +709,9 @@ telephony-forwarder/
 │   │       ├── dashboard.html  # Embedded web dashboard
 │   │       ├── dashboard.js    # Dashboard JavaScript (jQuery)
 │   │       ├── logs.html       # Log viewer interface
-│   │       └── logs.js         # Log viewer JavaScript (jQuery)
+│   │       ├── logs.js         # Log viewer JavaScript (jQuery)
+│   │       ├── config.html     # Config viewer interface
+│   │       └── config.js      # Config viewer JavaScript (jQuery)
 │   ├── logger/              # Structured logging with domain-based files
 │   ├── nats/                # NATS publisher and consumer
 │   └── store/               # In-memory event store
@@ -600,6 +720,7 @@ telephony-forwarder/
 │   │   └── YYYY-MM-DD.log
 │   └── ...
 ├── config.yaml              # Configuration file
+├── deploy.py                # Automated deployment script
 ├── go.mod
 └── README.md
 ```
