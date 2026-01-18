@@ -26,8 +26,8 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-//go:embed web/dashboard.html
-var dashboardHTML embed.FS
+//go:embed web/*
+var webAssets embed.FS
 
 // Event represents the incoming event payload
 // This matches the actual telephony signaling event structure
@@ -356,7 +356,10 @@ func NewServer(port int, handler *Handler) *Server {
 	mux.HandleFunc("/api/logs/domains", handler.HandleGetLogDomains)
 	mux.HandleFunc("/api/config/reload", handler.HandleReloadConfig)
 
-	// Serve dashboard
+	// Serve static assets (JS, CSS, etc.)
+	mux.HandleFunc("/static/", handler.HandleStatic)
+
+	// Serve dashboard (must be last to catch all other routes)
 	mux.HandleFunc("/", handler.HandleDashboard)
 
 	return &Server{
@@ -378,7 +381,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read embedded HTML file
-	htmlFS, err := fs.Sub(dashboardHTML, "web")
+	htmlFS, err := fs.Sub(webAssets, "web")
 	if err != nil {
 		logger.Logger.Error("Failed to read dashboard HTML", zap.Error(err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -395,6 +398,41 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write(htmlContent)
+}
+
+// HandleStatic serves static assets (JS, CSS, etc.)
+func (h *Handler) HandleStatic(w http.ResponseWriter, r *http.Request) {
+	// Extract filename from path (e.g., /static/dashboard.js -> dashboard.js)
+	filename := strings.TrimPrefix(r.URL.Path, "/static/")
+	if filename == "" || strings.Contains(filename, "..") {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Read embedded file
+	webFS, err := fs.Sub(webAssets, "web")
+	if err != nil {
+		logger.Logger.Error("Failed to read web assets", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	fileContent, err := fs.ReadFile(webFS, filename)
+	if err != nil {
+		logger.Logger.Debug("Static file not found", zap.String("file", filename), zap.Error(err))
+		http.NotFound(w, r)
+		return
+	}
+
+	// Set appropriate Content-Type based on file extension
+	if strings.HasSuffix(filename, ".js") {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	} else if strings.HasSuffix(filename, ".css") {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write(fileContent)
 }
 
 // LogEntry represents a parsed log entry from log files
