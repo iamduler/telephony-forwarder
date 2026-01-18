@@ -18,17 +18,25 @@ var Logger *zap.Logger
 
 // DomainLoggerManager manages loggers per domain
 type DomainLoggerManager struct {
-	baseDir    string
-	level      zapcore.Level
-	encoder    zapcore.Encoder
-	loggers    map[string]*zap.Logger // key: domain-date (e.g., "domain.com-2026-01-04")
-	mu         sync.RWMutex
+	baseDir       string
+	level         zapcore.Level
+	encoder       zapcore.Encoder
+	loggers       map[string]*zap.Logger // key: domain-date (e.g., "domain.com-2026-01-04")
+	mu            sync.RWMutex
 	cleanupTicker *time.Ticker
 	stopCleanup   chan bool
 }
 
 var domainLoggerManager *DomainLoggerManager
 var domainLoggerOnce sync.Once
+
+// localTimeEncoder encodes time in local timezone with ISO8601 format
+func localTimeEncoder(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+	// Convert to local timezone
+	localTime := t.Local()
+	// Format as ISO8601 with timezone offset
+	enc.AppendString(localTime.Format("2006-01-02T15:04:05.000Z07:00"))
+}
 
 // Init initializes the global logger
 // logFile: path to log file (empty string = stdout only)
@@ -42,7 +50,8 @@ func Init(level string, logFile string, enableDomainLogging bool) error {
 	config := zap.NewProductionConfig()
 	config.Level = zap.NewAtomicLevelAt(zapLevel)
 	config.EncoderConfig.TimeKey = "timestamp"
-	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	// Use local timezone instead of UTC
+	config.EncoderConfig.EncodeTime = localTimeEncoder
 
 	// Build encoder
 	encoder := zapcore.NewJSONEncoder(config.EncoderConfig)
@@ -71,9 +80,9 @@ func Init(level string, logFile string, enableDomainLogging bool) error {
 		// Use lumberjack for log rotation
 		fileWriter := &lumberjack.Logger{
 			Filename:   logFile,
-			MaxSize:    100, // megabytes
-			MaxBackups: 5,   // keep 5 backup files
-			MaxAge:     30,  // days
+			MaxSize:    100,  // megabytes
+			MaxBackups: 5,    // keep 5 backup files
+			MaxAge:     30,   // days
 			Compress:   true, // compress old log files
 		}
 
@@ -98,11 +107,11 @@ func Init(level string, logFile string, enableDomainLogging bool) error {
 			}
 
 			domainLoggerManager = &DomainLoggerManager{
-				baseDir:      baseDir,
-				level:        zapLevel,
-				encoder:      encoder,
-				loggers:      make(map[string]*zap.Logger),
-				stopCleanup:  make(chan bool),
+				baseDir:     baseDir,
+				level:       zapLevel,
+				encoder:     encoder,
+				loggers:     make(map[string]*zap.Logger),
+				stopCleanup: make(chan bool),
 			}
 
 			// Start cleanup routine to remove old logger references
@@ -154,9 +163,9 @@ func (dlm *DomainLoggerManager) getDomainLogger(domain, date string) *zap.Logger
 	// Use lumberjack for log rotation (though we rotate by date)
 	fileWriter := &lumberjack.Logger{
 		Filename:   logFile,
-		MaxSize:    500, // megabytes (large enough for daily logs)
-		MaxBackups: 30,  // keep 30 days of logs
-		MaxAge:     30,  // days
+		MaxSize:    500,  // megabytes (large enough for daily logs)
+		MaxBackups: 30,   // keep 30 days of logs
+		MaxAge:     30,   // days
 		Compress:   true, // compress old log files
 	}
 
@@ -300,4 +309,3 @@ func Sync() {
 		domainLoggerManager.mu.RUnlock()
 	}
 }
-

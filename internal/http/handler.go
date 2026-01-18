@@ -29,8 +29,10 @@ import (
 //go:embed web/*
 var webAssets embed.FS
 
-// Event represents the incoming event payload
-// This matches the actual telephony signaling event structure
+// Event represents a subset of common fields in telephony signaling events
+// Note: The system preserves ALL fields from incoming JSON, not just these.
+// Different PBX systems may have different field structures and naming conventions.
+// The handler decodes JSON to map[string]interface{} to preserve all fields.
 type Event struct {
 	ActualHotline        string `json:"actual_hotline"`
 	Billsec              string `json:"billsec"`
@@ -80,8 +82,9 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var event Event
-	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+	// Decode JSON directly to map to preserve ALL fields from different PBX systems
+	var eventMap map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&eventMap); err != nil {
 		logger.Logger.Warn("Failed to decode event", zap.Error(err))
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
@@ -89,31 +92,44 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Validate required fields
 	// Domain is required for routing
-	if event.Domain == "" {
-		http.Error(w, "domain is required", http.StatusBadRequest)
-		return
+	domain, ok := eventMap["domain"].(string)
+	if !ok || domain == "" {
+		// Try alternative field names that might be used by different PBX systems
+		if altDomain, ok := eventMap["Domain"].(string); ok && altDomain != "" {
+			domain = altDomain
+			eventMap["domain"] = domain // Normalize to lowercase
+		} else {
+			http.Error(w, "domain is required", http.StatusBadRequest)
+			return
+		}
 	}
 
-	// Publish to NATS JetStream
-	eventJSON, err := json.Marshal(event)
+	// Extract call_id for logging (if available)
+	callID := ""
+	if id, ok := eventMap["call_id"].(string); ok {
+		callID = id
+	} else if id, ok := eventMap["CallID"].(string); ok {
+		callID = id
+		eventMap["call_id"] = callID // Normalize to lowercase
+	}
+
+	// Publish to NATS JetStream - preserve all fields
+	eventJSON, err := json.Marshal(eventMap)
 	if err != nil {
-		logger.Logger.Error("Failed to marshal event", zap.Error(err), zap.String("call_id", event.CallID), zap.String("domain", event.Domain))
+		logger.Logger.Error("Failed to marshal event", zap.Error(err), zap.String("call_id", callID), zap.String("domain", domain))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	if err := h.publisher.Publish(eventJSON); err != nil {
-		logger.Logger.Error("Failed to publish event", zap.Error(err), zap.String("call_id", event.CallID), zap.String("domain", event.Domain))
+		logger.Logger.Error("Failed to publish event", zap.Error(err), zap.String("call_id", callID), zap.String("domain", domain))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
+	// Log full event data with all fields from any PBX system
 	logger.LogWithDomain(zapcore.InfoLevel, "Event received and published",
-		zap.String("call_id", event.CallID),
-		zap.String("domain", event.Domain),
-		zap.String("direction", event.Direction),
-		zap.String("state", event.State),
-		zap.String("status", event.Status),
+		zap.Any("event", eventMap), // Log full event data with all fields
 	)
 
 	w.WriteHeader(http.StatusAccepted)
@@ -541,75 +557,138 @@ func (h *Handler) HandleGetLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for domain, entries := range logsByDomain {
-		// First pass: collect metadata from "Event received and published"
+		// First pass: collect full event data from "Event received and published"
 		for _, entry := range entries {
 			if entry.Message == "Event received and published" {
-				metadata := map[string]interface{}{
-					"direction": entry.Direction,
-					"state":     entry.State,
-					"status":    entry.Status,
-				}
-				if entry.CallID != "" {
-					eventMetadata[entry.CallID] = metadata
+				// Extract full event data from Fields
+				if entry.Fields != nil {
+					if eventData, ok := entry.Fields["event"].(map[string]interface{}); ok {
+						eventMetadata[entry.CallID] = eventData
+					}
 				}
 			}
 		}
 
 		// Second pass: extract events
 		for _, entry := range entries {
+			// Extract full event data from Fields map (contains "event" field with all data)
+			var fullEventData map[string]interface{}
+			if entry.Fields != nil {
+				if eventData, ok := entry.Fields["event"].(map[string]interface{}); ok {
+					// Use the full event data from log
+					fullEventData = eventData
+				} else {
+					// Fallback: use Fields directly if "event" field doesn't exist
+					fullEventData = entry.Fields
+				}
+			}
+
+			// Convert timestamp to local timezone
+			timestamp := entry.Timestamp
+			var parsedTime time.Time
+			var err error
+
+			// Try different timestamp formats
+			formats := []string{
+				time.RFC3339,                    // 2006-01-02T15:04:05Z07:00
+				time.RFC3339Nano,                // 2006-01-02T15:04:05.999999999Z07:00
+				"2006-01-02T15:04:05.000Z07:00", // Custom format with milliseconds
+				"2006-01-02T15:04:05Z",          // UTC without timezone offset
+			}
+
+			for _, format := range formats {
+				parsedTime, err = time.Parse(format, timestamp)
+				if err == nil {
+					break
+				}
+			}
+
+			if err == nil {
+				// Convert to local timezone and format with timezone offset
+				timestamp = parsedTime.Local().Format("2006-01-02T15:04:05.000Z07:00")
+			}
+
 			if entry.Message == "Event forwarded successfully" || entry.Message == "Forwarding event" {
 				deliveryAttempt := 1
 				if entry.DeliveryAttempt > 0 {
 					deliveryAttempt = entry.DeliveryAttempt
-				}
-
-				// Get metadata from "Event received and published" if available
-				metadata := eventMetadata[entry.CallID]
-				direction := entry.Direction
-				if direction == "" && metadata != nil {
-					if d, ok := metadata["direction"].(string); ok {
-						direction = d
+				} else if fullEventData != nil {
+					if da, ok := fullEventData["delivery_attempt"].(float64); ok {
+						deliveryAttempt = int(da)
+					} else if da, ok := fullEventData["delivery_attempt"].(int); ok {
+						deliveryAttempt = da
 					}
 				}
 
-				event := map[string]interface{}{
-					"call_id":          entry.CallID,
-					"domain":           entry.Domain,
-					"state":            entry.State,
-					"status":           entry.Status,
-					"direction":        direction,
-					"forwarded_at":     entry.Timestamp,
-					"delivery_attempt": deliveryAttempt,
+				// Use full event data if available, otherwise construct from entry fields
+				if fullEventData != nil {
+					// Add timestamp, delivery_attempt, and message to full event data
+					fullEventData["timestamp"] = timestamp
+					fullEventData["forwarded_at"] = timestamp
+					fullEventData["delivery_attempt"] = deliveryAttempt
+					fullEventData["msg"] = entry.Message
+					eventsByDomain[domain] = append(eventsByDomain[domain], fullEventData)
+				} else {
+					// Fallback: construct from entry fields
+					event := map[string]interface{}{
+						"call_id":          entry.CallID,
+						"domain":           entry.Domain,
+						"state":            entry.State,
+						"status":           entry.Status,
+						"direction":        entry.Direction,
+						"forwarded_at":     timestamp,
+						"delivery_attempt": deliveryAttempt,
+						"msg":              entry.Message,
+					}
+					eventsByDomain[domain] = append(eventsByDomain[domain], event)
 				}
-				eventsByDomain[domain] = append(eventsByDomain[domain], event)
 			} else if entry.Message == "Event forwarding failed" || entry.Message == "Failed to forward event" {
 				deliveryAttempt := 1
 				if entry.DeliveryAttempt > 0 {
 					deliveryAttempt = entry.DeliveryAttempt
-				}
-
-				// Get metadata from "Event received and published" if available
-				metadata := eventMetadata[entry.CallID]
-				direction := entry.Direction
-				if direction == "" && metadata != nil {
-					if d, ok := metadata["direction"].(string); ok {
-						direction = d
+				} else if fullEventData != nil {
+					if da, ok := fullEventData["delivery_attempt"].(float64); ok {
+						deliveryAttempt = int(da)
+					} else if da, ok := fullEventData["delivery_attempt"].(int); ok {
+						deliveryAttempt = da
 					}
 				}
 
-				event := map[string]interface{}{
-					"call_id":          entry.CallID,
-					"domain":           entry.Domain,
-					"state":            entry.State,
-					"status":           entry.Status,
-					"direction":        direction,
-					"failed_at":        entry.Timestamp,
-					"error":            entry.Error,
-					"delivery_attempt": deliveryAttempt,
-					"max_deliveries":   maxDeliveries,
-					"will_retry":       deliveryAttempt < maxDeliveries,
+				// Use full event data if available, otherwise construct from entry fields
+				if fullEventData != nil {
+					// Add timestamp, error info, delivery_attempt, and message to full event data
+					fullEventData["timestamp"] = timestamp
+					fullEventData["failed_at"] = timestamp
+					fullEventData["delivery_attempt"] = deliveryAttempt
+					fullEventData["max_deliveries"] = maxDeliveries
+					fullEventData["will_retry"] = deliveryAttempt < maxDeliveries
+					fullEventData["msg"] = entry.Message
+					if entry.Error != "" {
+						fullEventData["error"] = entry.Error
+					}
+					// Extract error messages from Fields if available
+					if entry.Fields != nil {
+						if errors, ok := entry.Fields["errors"].([]interface{}); ok {
+							fullEventData["error_messages"] = errors
+						}
+					}
+					failedEventsByDomain[domain] = append(failedEventsByDomain[domain], fullEventData)
+				} else {
+					// Fallback: construct from entry fields
+					event := map[string]interface{}{
+						"call_id":          entry.CallID,
+						"domain":           entry.Domain,
+						"state":            entry.State,
+						"status":           entry.Status,
+						"direction":        entry.Direction,
+						"failed_at":        timestamp,
+						"error":            entry.Error,
+						"delivery_attempt": deliveryAttempt,
+						"max_deliveries":   maxDeliveries,
+						"will_retry":       deliveryAttempt < maxDeliveries,
+					}
+					failedEventsByDomain[domain] = append(failedEventsByDomain[domain], event)
 				}
-				failedEventsByDomain[domain] = append(failedEventsByDomain[domain], event)
 			}
 		}
 	}

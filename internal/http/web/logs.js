@@ -95,11 +95,15 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
                         const rawData = JSON.stringify(event, null, 2);
                         const escapedData = escapeHtml(rawData);
                         const timestamp = event.timestamp || event.forwarded_at || '';
+                        const msg = event.msg || '';
                         
                         return `
                             <div class="event-card">
                                 <div class="event-header">
-                                    <div class="event-call-id">📞 ${escapeHtml(event.call_id || 'N/A')}</div>
+                                    <div class="event-call-id">
+                                        📞 ${escapeHtml(event.call_id || 'N/A')}
+                                        ${msg ? `<span style="margin-left: 8px; font-size: 12px; color: #6c757d; font-weight: normal;">${escapeHtml(msg)}</span>` : ''}
+                                    </div>
                                     <div class="event-time" title="${escapeHtml(timestamp)}">
                                         ${escapeHtml(timestamp)}
                                     </div>
@@ -115,12 +119,14 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
                         const willRetry = event.delivery_attempt && event.max_deliveries && event.delivery_attempt < event.max_deliveries;
                         const cardClass = willRetry ? 'retry' : 'failed';
                         const timestamp = event.timestamp || event.failed_at || '';
+                        const msg = event.msg || '';
                         
                         return `
                             <div class="event-card ${cardClass}">
                                 <div class="event-header">
                                     <div class="event-call-id">
                                         ${willRetry ? '🔄' : '❌'} ${escapeHtml(event.call_id || 'N/A')}
+                                        ${msg ? `<span style="margin-left: 8px; font-size: 12px; color: #6c757d; font-weight: normal;">${escapeHtml(msg)}</span>` : ''}
                                         ${willRetry ? '<span class="badge badge-warning" style="margin-left: 8px;">Will Retry</span>' : ''}
                                     </div>
                                     <div class="event-time" title="${escapeHtml(timestamp)}">

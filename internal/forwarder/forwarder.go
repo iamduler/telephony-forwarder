@@ -55,26 +55,43 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 		return fmt.Errorf("no endpoints configured for domain: %s", domain)
 	}
 
-	// Parse event to extract call_id for logging
-	var event struct {
-		CallID string `json:"call_id"`
-		State  string `json:"state"`
-		Status string `json:"status"`
-	}
-	if err := json.Unmarshal(eventData, &event); err != nil {
+	// Parse event to extract all fields for logging
+	// This preserves ALL fields from different PBX systems
+	var eventMap map[string]interface{}
+	if err := json.Unmarshal(eventData, &eventMap); err != nil {
 		logger.Logger.Warn("Failed to parse event for logging", zap.Error(err))
+		// Fallback: try to extract at least call_id
+		var fallbackEvent struct {
+			CallID string `json:"call_id"`
+		}
+		_ = json.Unmarshal(eventData, &fallbackEvent)
+		eventMap = map[string]interface{}{
+			"call_id": fallbackEvent.CallID,
+		}
 	}
 
-	callID := event.CallID
+	// Extract call_id for convenience - support different naming conventions
+	callID := ""
+	if id, ok := eventMap["call_id"].(string); ok {
+		callID = id
+	} else if id, ok := eventMap["CallID"].(string); ok {
+		callID = id
+		eventMap["call_id"] = callID // Normalize to lowercase
+	} else if id, ok := eventMap["call_id"].(float64); ok {
+		callID = fmt.Sprintf("%.0f", id)
+	} else if id, ok := eventMap["CallID"].(float64); ok {
+		callID = fmt.Sprintf("%.0f", id)
+		eventMap["call_id"] = callID // Normalize to lowercase
+	}
 
-	// Use domain-aware logging if available
+	// Add delivery_attempt to event map for logging
+	eventMap["delivery_attempt"] = deliveryAttempt
+
+	// Use domain-aware logging with full event data
 	logger.LogWithDomain(zapcore.InfoLevel, "Forwarding event",
-		zap.String("call_id", callID),
 		zap.String("domain", domain),
-		zap.String("state", event.State),
-		zap.String("status", event.Status),
-		zap.Int("delivery_attempt", deliveryAttempt),
 		zap.Int("endpoint_count", len(endpoints)),
+		zap.Any("event", eventMap), // Log full event data
 	)
 
 	// Add delivery_attempt to event payload
@@ -87,15 +104,25 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 		eventPayload = eventData // Fallback to original payload
 	}
 
+	// Extract state and status for error logging
+	state := ""
+	status := ""
+	if s, ok := eventMap["state"].(string); ok {
+		state = s
+	}
+	if s, ok := eventMap["status"].(string); ok {
+		status = s
+	}
+
 	// Forward to all endpoints concurrently
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(endpoints))
 
-	for _, endpoint := range endpoints {
+		for _, endpoint := range endpoints {
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
-			if err := f.forwardToEndpoint(ctx, url, eventPayload, callID, domain, event.State, event.Status); err != nil {
+			if err := f.forwardToEndpoint(ctx, url, eventPayload, callID, domain, state, status); err != nil {
 				errChan <- fmt.Errorf("endpoint %s failed: %w", url, err)
 			}
 		}(endpoint)
@@ -112,35 +139,33 @@ func (f *Forwarder) ForwardEvent(ctx context.Context, eventData []byte, domain s
 	}
 
 	if len(errors) > 0 {
-		logger.LogWithDomain(zapcore.ErrorLevel, "Event forwarding failed",
-			zap.String("call_id", callID),
+		// Create error messages array for logging
+		errorMessages := make([]string, len(errors))
+		for i, err := range errors {
+			errorMessages[i] = err.Error()
+		}
+
+		// Log full event data with error information
+		logger.LogWithDomain(zapcore.ErrorLevel, "Failed to forward event",
 			zap.String("domain", domain),
-			zap.String("state", event.State),
-			zap.String("status", event.Status),
-			zap.Int("delivery_attempt", deliveryAttempt),
 			zap.Int("failed_endpoints", len(errors)),
-			zap.Any("errors", errors),
+			zap.Strings("errors", errorMessages),
+			zap.Any("event", eventMap), // Log full event data
 		)
 
 		// Store the failed event for dashboard
 		if f.store != nil {
-			errorMessages := make([]string, len(errors))
-			for i, err := range errors {
-				errorMessages[i] = err.Error()
-			}
 			f.store.AddFailedEvent(eventData, domain, callID, deliveryAttempt, maxDeliveries, endpoints, errorMessages)
 		}
 
 		return fmt.Errorf("failed to forward to %d endpoint(s): %v", len(errors), errors)
 	}
 
+	// Log full event data on success
 	logger.LogWithDomain(zapcore.InfoLevel, "Event forwarded successfully",
-		zap.String("call_id", callID),
 		zap.String("domain", domain),
-		zap.String("state", event.State),
-		zap.String("status", event.Status),
-		zap.Int("delivery_attempt", deliveryAttempt),
 		zap.Int("endpoint_count", len(endpoints)),
+		zap.Any("event", eventMap), // Log full event data
 	)
 
 	// Store the forwarded event for dashboard
