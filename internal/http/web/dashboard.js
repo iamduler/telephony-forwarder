@@ -334,10 +334,41 @@ function switchTab(tab) {
     loadEvents();
 }
 
+// Load domains from config
+function loadDomains() {
+    $.ajax({
+        url: '/api/config/domains',
+        method: 'GET',
+        dataType: 'json',
+        success: function(data) {
+            const $domainSelect = $('#domainFilter');
+            
+            // Clear existing options except the first one
+            $domainSelect.find('option:not(:first)').remove();
+            
+            // Add domains from config
+            if (data.domains && data.domains.length > 0) {
+                data.domains.forEach(function(domain) {
+                    $domainSelect.append($('<option>', {
+                        value: domain,
+                        text: domain
+                    }));
+                });
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error('Error loading domains:', error);
+        }
+    });
+}
+
 // Initialize on page load
 $(document).ready(function() {
-    // Filter input handler
-    $('#domainFilter').on('input', function() {
+    // Load domains first
+    loadDomains();
+    
+    // Filter select handler
+    $('#domainFilter').on('change', function() {
         loadEvents();
     });
 

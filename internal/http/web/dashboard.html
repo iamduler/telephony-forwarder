@@ -98,6 +98,27 @@
             flex-wrap: wrap;
         }
 
+        .filter-select {
+            padding: 10px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+            color: #333;
+            cursor: pointer;
+            transition: border-color 0.3s;
+            min-width: 200px;
+        }
+
+        .filter-select:hover {
+            border-color: #667eea;
+        }
+
+        .filter-select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
         .btn {
             padding: 10px 20px;
             border: none;
@@ -378,7 +399,9 @@
         <div class="header">
             <h1>📊 Telephony Forwarder Dashboard</h1>
             <div class="controls">
-                <input type="text" id="domainFilter" class="filter-input" placeholder="🔍 Lọc theo domain...">
+                <select id="domainFilter" class="filter-select">
+                    <option value="">🌐 Tất cả domains</option>
+                </select>
                 <button class="btn btn-primary" onclick="loadEvents()">🔄 Refresh</button>
                 <a href="/logs" class="btn btn-secondary" style="text-decoration: none; display: inline-block;">📋 Xem Log Files</a>
                 <a href="/config" class="btn btn-secondary" style="text-decoration: none; display: inline-block;">⚙️ Xem Config</a>

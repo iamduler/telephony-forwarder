@@ -391,6 +391,7 @@ func NewServer(port int, handler *Handler) *Server {
 	mux.HandleFunc("/api/logs", handler.HandleGetLogs)
 	mux.HandleFunc("/api/logs/domains", handler.HandleGetLogDomains)
 	mux.HandleFunc("/api/config", handler.HandleGetConfig)
+	mux.HandleFunc("/api/config/domains", handler.HandleGetConfigDomains)
 	mux.HandleFunc("/api/config/reload", handler.HandleReloadConfig)
 
 	// Serve static assets (JS, CSS, etc.)
@@ -840,6 +841,54 @@ func (h *Handler) HandleGetConfig(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"routes": routes,
 		"count":  len(routes),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// HandleGetConfigDomains handles GET /api/config/domains - returns list of domains from config
+func (h *Handler) HandleGetConfigDomains(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.config == nil {
+		http.Error(w, "Configuration not available", http.StatusInternalServerError)
+		return
+	}
+
+	// Get current config from forwarder (may have been reloaded)
+	var routes []config.Route
+	if h.forwarder != nil {
+		cfg := h.forwarder.GetConfig()
+		if cfg != nil {
+			routes = cfg.Routes
+		} else {
+			routes = h.config.Routes
+		}
+	} else {
+		routes = h.config.Routes
+	}
+
+	// Extract unique domains
+	domainMap := make(map[string]bool)
+	domains := []string{}
+	for _, route := range routes {
+		if route.Domain != "" && !domainMap[route.Domain] {
+			domainMap[route.Domain] = true
+			domains = append(domains, route.Domain)
+		}
+	}
+
+	// Sort domains alphabetically
+	sort.Strings(domains)
+
+	response := map[string]interface{}{
+		"domains": domains,
+		"count":   len(domains),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
