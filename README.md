@@ -602,6 +602,151 @@ Logs can be read via:
 - **Dashboard**: Web interface at `/` for real-time events from in-memory store
 - **File System**: Direct access to log files in `logs/` directory (JSON format, one entry per line)
 
+### Log Analysis and Debugging
+
+The service provides tools and methods to analyze logs and debug issues:
+
+#### Using the Log Analysis Script
+
+A helper script `check_received_events.sh` is provided to analyze events received from PBX systems and compare them with forwarding events:
+
+**Basic Usage:**
+```bash
+# View all events received for a domain today
+./check_received_events.sh "" "vietanh.cloudgo.vn"
+
+# View events for a specific call_id
+./check_received_events.sh "your-call-id-here" "vietanh.cloudgo.vn"
+
+# View events for a specific date
+./check_received_events.sh "" "vietanh.cloudgo.vn" "2026-01-18"
+```
+
+**What the Script Shows:**
+- ✅ **Events Received**: All events received from PBX (log "Event received and published")
+- ➡️ **Events Forwarded**: All forwarding attempts (log "Forwarding event")
+- 📊 **Statistics**: Total counts and analysis
+- ⚠️ **Warnings**: Alerts if more forwarding events than received events (indicates duplicate processing)
+
+**Example Output:**
+```
+==========================================
+Checking events received for domain: vietanh.cloudgo.vn
+Date: 2026-01-18
+Call ID: abc123
+==========================================
+
+📋 Events RECEIVED from PBX (before forwarding):
+----------------------------------------
+  ✅ 2026-01-18T10:00:00.000+07:00 | call_id: abc123 | domain: vietanh.cloudgo.vn
+  ✅ 2026-01-18T10:00:05.000+07:00 | call_id: abc123 | domain: vietanh.cloudgo.vn
+
+📊 Total events received: 2
+
+📤 Events FORWARDED to endpoints:
+----------------------------------------
+  ➡️  2026-01-18T10:00:01.000+07:00 | call_id: abc123 | attempt: 1 | endpoints: 2
+  ➡️  2026-01-18T10:00:06.000+07:00 | call_id: abc123 | attempt: 1 | endpoints: 2
+
+📊 Total forwarding events: 2
+
+🔍 Analysis for call_id: abc123
+----------------------------------------
+  Events received: 2
+  Events forwarded: 2
+  
+  ✅ Normal: Each received event was forwarded once
+  With 2 endpoints, this means 4 HTTP requests were made
+```
+
+#### Manual Log Analysis
+
+**View Events Received from PBX:**
+```bash
+# View all events received for a domain today
+grep "Event received and published" logs/vietanh_cloudgo_vn/$(date +%Y-%m-%d).log
+
+# Count events received
+grep -c "Event received and published" logs/vietanh_cloudgo_vn/$(date +%Y-%m-%d).log
+
+# View events for a specific call_id
+grep "Event received and published" logs/vietanh_cloudgo_vn/$(date +%Y-%m-%d).log | grep "your-call-id-here"
+```
+
+**View Forwarding Events:**
+```bash
+# View all forwarding events
+grep "Forwarding event" logs/vietanh_cloudgo_vn/$(date +%Y-%m-%d).log
+
+# Count forwarding events
+grep -c "Forwarding event" logs/vietanh_cloudgo_vn/$(date +%Y-%m-%d).log
+
+# Compare received vs forwarded
+echo "Events received: $(grep -c 'Event received and published' logs/vietanh_cloudgo_vn/$(date +%Y-%m-%d).log)"
+echo "Events forwarded: $(grep -c 'Forwarding event' logs/vietanh_cloudgo_vn/$(date +%Y-%m-%d).log)"
+```
+
+**Real-time Log Monitoring:**
+```bash
+# Monitor logs in real-time
+tail -f logs/vietanh_cloudgo_vn/$(date +%Y-%m-%d).log | grep -E "(Event received and published|Forwarding event)"
+```
+
+**Debugging Duplicate Forwarding Issues:**
+```bash
+# Check if there are more forwarding events than received events
+RECEIVED=$(grep -c 'Event received and published' logs/vietanh_cloudgo_vn/$(date +%Y-%m-%d).log)
+FORWARDED=$(grep -c 'Forwarding event' logs/vietanh_cloudgo_vn/$(date +%Y-%m-%d).log)
+
+if [ "$FORWARDED" -gt "$RECEIVED" ]; then
+    echo "⚠️  WARNING: More forwarding events ($FORWARDED) than received events ($RECEIVED)"
+    echo "This suggests duplicate processing or multiple instances running."
+fi
+```
+
+#### Key Log Messages
+
+The following log messages are important for debugging:
+
+1. **"Event received and published"**: Event received from PBX via HTTP POST (before forwarding)
+   - Contains: `call_id`, `domain`, and full event data
+   - This log is written when the event is successfully published to NATS JetStream
+   - Use this to verify how many events were actually received from the PBX system
+
+2. **"Forwarding event"**: Starting to forward event to endpoints
+   - Contains: `call_id`, `domain`, `delivery_attempt`, `endpoint_count`, and full event data
+   - This log is written when the consumer starts forwarding to backend endpoints
+
+3. **"Event forwarded successfully"**: All endpoints responded successfully
+   - Contains: `call_id`, `domain`, `endpoint_count`, and full event data
+
+4. **"Event forwarding failed"**: Forwarding failed (one or more endpoints failed)
+   - Contains: `call_id`, `domain`, `delivery_attempt`, error details, and full event data
+
+#### Debugging Workflow
+
+When investigating duplicate forwarding issues:
+
+1. **Check how many events were received:**
+   ```bash
+   ./check_received_events.sh "call-id" "domain"
+   ```
+
+2. **Compare with forwarding events:**
+   - If received 1 event but forwarded 3 times → Check for multiple instances running
+   - If received 3 events and forwarded 3 times → Normal (each event forwarded once to 2 endpoints = 6 HTTP requests)
+
+3. **Check for multiple instances:**
+   ```bash
+   ps aux | grep -E "(cmd/app|telephony-forwarder)" | grep -v grep
+   ```
+
+4. **Check NATS consumers:**
+   ```bash
+   # If you have nats CLI installed
+   nats consumer ls call-signals
+   ```
+
 ## Graceful Shutdown
 
 The service handles SIGINT and SIGTERM:
@@ -721,6 +866,7 @@ telephony-forwarder/
 │   └── ...
 ├── config.yaml              # Configuration file
 ├── deploy.py                # Automated deployment script
+├── check_received_events.sh # Log analysis helper script
 ├── go.mod
 └── README.md
 ```
