@@ -72,16 +72,14 @@ func NewConsumer(url, streamName, subjectPattern, consumerName string, ackWait, 
 		return nil, err
 	}
 
-	// Delete existing consumer if it exists (to ensure correct configuration)
-	// This is necessary because consumer configuration cannot be changed once created
-	err = js.DeleteConsumer(streamName, consumerName)
-	if err != nil {
-		// Ignore error if consumer doesn't exist
-		if !contains(err.Error(), "not found") && !contains(err.Error(), "does not exist") {
-			logger.Logger.Warn("Failed to delete existing consumer (may not exist)", zap.Error(err))
-		}
+	// Check if consumer already exists
+	_, err = js.ConsumerInfo(streamName, consumerName)
+	if err == nil {
+		// Consumer exists, use it (don't delete and recreate to avoid losing message position)
+		logger.Logger.Info("Using existing NATS consumer", zap.String("consumer", consumerName))
 	} else {
-		logger.Logger.Info("Deleted existing consumer to recreate with correct configuration", zap.String("consumer", consumerName))
+		// Consumer doesn't exist, will be created below
+		logger.Logger.Info("Consumer does not exist, will create new one", zap.String("consumer", consumerName))
 	}
 
 	// Create consumer with PUSH-based delivery
@@ -101,12 +99,19 @@ func NewConsumer(url, streamName, subjectPattern, consumerName string, ackWait, 
 		// No polling required - messages arrive asynchronously
 	}
 
-	_, err = js.AddConsumer(streamName, consumerConfig)
+	// Only create consumer if it doesn't exist
+	_, err = js.ConsumerInfo(streamName, consumerName)
 	if err != nil {
-		conn.Close()
-		return nil, err
+		// Consumer doesn't exist, create it
+		_, err = js.AddConsumer(streamName, consumerConfig)
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		logger.Logger.Info("Created NATS consumer", zap.String("consumer", consumerName))
+	} else {
+		logger.Logger.Info("NATS consumer already exists, using existing consumer", zap.String("consumer", consumerName))
 	}
-	logger.Logger.Info("Created NATS consumer", zap.String("consumer", consumerName))
 
 	// Create a message channel for PUSH-based delivery
 	msgChan := make(chan *nats.Msg, 100)
