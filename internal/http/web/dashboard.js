@@ -27,10 +27,10 @@ function formatRelativeTime(timestamp) {
 
 function getStateBadge(state) {
     const badges = {
-        'answered': '<span class="badge badge-success">✓ Answered</span>',
-        'missed': '<span class="badge badge-warning">✗ Missed</span>',
-        'busy': '<span class="badge badge-warning">📞 Busy</span>',
-        'completed': '<span class="badge badge-success">✓ Completed</span>',
+        'answered': '<span class="badge badge-success"><i class="fas fa-check-circle"></i> Answered</span>',
+        'missed': '<span class="badge badge-warning"><i class="fas fa-times-circle"></i> Missed</span>',
+        'busy': '<span class="badge badge-warning"><i class="fas fa-phone-alt"></i> Busy</span>',
+        'completed': '<span class="badge badge-success"><i class="fas fa-check-circle"></i> Completed</span>',
     };
     return badges[state] || `<span class="badge badge-info">${state}</span>`;
 }
@@ -55,7 +55,7 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
     if (!hasEvents) {
         $container.html(`
             <div class="empty-state">
-                <div class="empty-state-icon">📭</div>
+                <div class="empty-state-icon"><i class="fas fa-inbox"></i></div>
                 <h2>Chưa có events nào</h2>
                 <p>Gửi events để xem chúng ở đây</p>
             </div>
@@ -84,10 +84,10 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
         html += `
             <div class="domain-card">
                 <div class="domain-header">
-                    <div class="domain-name">🌐 ${domain}</div>
+                    <div class="domain-name"><i class="fas fa-globe"></i> ${domain}</div>
                     <div class="domain-count">
-                        ${events.length > 0 ? `<span style="color: #28a745;">✓${events.length}</span>` : ''}
-                        ${failedEvents.length > 0 ? `<span style="color: #dc3545; margin-left: 8px;">✗${failedEvents.length}</span>` : ''}
+                        ${events.length > 0 ? `<span style="color: #28a745;"><i class="fas fa-check-circle"></i> ${events.length}</span>` : ''}
+                        ${failedEvents.length > 0 ? `<span style="color: #dc3545; margin-left: 8px;"><i class="fas fa-times-circle"></i> ${failedEvents.length}</span>` : ''}
                     </div>
                 </div>
                 <div class="events-list">
@@ -104,9 +104,9 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
                         return `
                             <div class="event-card">
                                 <div class="event-header">
-                                    <div class="event-call-id">📞 ${event.call_id || 'N/A'}</div>
+                                    <div class="event-call-id"><i class="fas fa-phone"></i> ${event.call_id || 'N/A'}</div>
                                     <div class="event-time" title="${formatTime(event.forwarded_at)}">
-                                        ${formatRelativeTime(event.forwarded_at)}
+                                        <i class="fas fa-clock"></i> ${formatRelativeTime(event.forwarded_at)}
                                     </div>
                                 </div>
                                 <div class="event-details">
@@ -183,11 +183,11 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
                             <div class="event-card ${cardClass}">
                                 <div class="event-header">
                                     <div class="event-call-id">
-                                        ${willRetry ? '🔄' : '❌'} ${event.call_id || 'N/A'}
-                                        ${willRetry ? '<span class="badge badge-warning" style="margin-left: 8px;">Will Retry</span>' : ''}
+                                        <i class="fas fa-phone"></i> ${event.call_id || 'N/A'}
+                                        ${willRetry ? '<span class="badge badge-warning" style="margin-left: 8px;"><i class="fas fa-redo"></i> Will Retry</span>' : ''}
                                     </div>
                                     <div class="event-time" title="${formatTime(event.failed_at)}">
-                                        ${formatRelativeTime(event.failed_at)}
+                                        <i class="fas fa-clock"></i> ${formatRelativeTime(event.failed_at)}
                                     </div>
                                 </div>
                                 <div class="event-details">
@@ -210,14 +210,14 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
                                 </div>
                                 ${event.error || (event.error_messages && event.error_messages.length > 0) ? `
                                     <div class="error-messages">
-                                        <strong style="font-size: 12px; color: #721c24;">Errors:</strong>
+                                        <strong style="font-size: 12px; color: #721c24;"><i class="fas fa-exclamation-triangle"></i> Errors:</strong>
                                         ${event.error ? `<div class="error-message">${event.error}</div>` : ''}
                                         ${event.error_messages ? event.error_messages.map(err => `<div class="error-message">${err}</div>`).join('') : ''}
                                     </div>
                                 ` : ''}
                                 ${event.endpoints && event.endpoints.length > 0 ? `
                                     <div class="endpoints-list">
-                                        <strong style="font-size: 12px; color: #6c757d;">Endpoints:</strong>
+                                        <strong style="font-size: 12px; color: #6c757d;"><i class="fas fa-server"></i> Endpoints:</strong>
                                         ${event.endpoints.map(ep => `<span class="endpoint">${ep}</span>`).join('')}
                                     </div>
                                 ` : ''}
@@ -231,7 +231,7 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
 
     $container.html(html || `
         <div class="empty-state">
-            <div class="empty-state-icon">🔍</div>
+            <div class="empty-state-icon"><i class="fas fa-search"></i></div>
             <h2>Không tìm thấy events nào</h2>
         </div>
     `);
@@ -294,7 +294,7 @@ function loadEvents() {
             
             $('#domainsContainer').html(`
                 <div class="empty-state">
-                    <div class="empty-state-icon">❌</div>
+                    <div class="empty-state-icon"><i class="fas fa-exclamation-triangle"></i></div>
                     <h2>Lỗi khi tải dữ liệu</h2>
                     <p>${errorMessage}</p>
                     <p style="margin-top: 12px; font-size: 12px; color: #6c757d;">

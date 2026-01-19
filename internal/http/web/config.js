@@ -15,7 +15,7 @@ function loadConfig() {
             if (!data.routes || data.routes.length === 0) {
                 $container.html(`
                     <div class="empty-state">
-                        <div class="empty-state-icon">📭</div>
+                        <div class="empty-state-icon"><i class="fas fa-inbox"></i></div>
                         <h2>Không có routes nào được cấu hình</h2>
                         <p>Vui lòng thêm routes vào file config.yaml</p>
                     </div>
@@ -38,15 +38,15 @@ function loadConfig() {
                 html += `
                     <div class="route-card">
                         <div class="route-header">
-                            <div class="route-domain">🌐 ${escapeHtml(domain)}</div>
-                            <div class="endpoint-count">${endpointCount} endpoint${endpointCount !== 1 ? 's' : ''}</div>
+                            <div class="route-domain"><i class="fas fa-globe"></i> ${escapeHtml(domain)}</div>
+                            <div class="endpoint-count"><i class="fas fa-server"></i> ${endpointCount} endpoint${endpointCount !== 1 ? 's' : ''}</div>
                         </div>
                         <div class="endpoints-list">
                             ${endpoints.length > 0 
                                 ? endpoints.map(function(endpoint) {
-                                    return `<div class="endpoint-item">${escapeHtml(endpoint)}</div>`;
+                                    return `<div class="endpoint-item"><i class="fas fa-link"></i> ${escapeHtml(endpoint)}</div>`;
                                 }).join('')
-                                : '<div class="endpoint-item" style="color: #999; font-style: italic;">No endpoints configured</div>'
+                                : '<div class="endpoint-item" style="color: #999; font-style: italic;"><i class="fas fa-exclamation-circle"></i> No endpoints configured</div>'
                             }
                         </div>
                     </div>
@@ -63,7 +63,7 @@ function loadConfig() {
             
             $container.html(`
                 <div class="empty-state">
-                    <div class="empty-state-icon">❌</div>
+                    <div class="empty-state-icon"><i class="fas fa-exclamation-triangle"></i></div>
                     <h2>Lỗi khi tải cấu hình</h2>
                     <p>${escapeHtml(errorMessage)}</p>
                     <p style="margin-top: 12px; font-size: 12px; color: #6c757d;">

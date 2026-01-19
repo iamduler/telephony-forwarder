@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Telephony Forwarder - Dashboard</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <style>
         * {
             margin: 0;
@@ -13,7 +14,7 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #187ce4 0%, #0d5aa7 100%);
             min-height: 100vh;
             padding: 20px;
         }
@@ -35,6 +36,11 @@
             color: #333;
             margin-bottom: 12px;
             font-size: 28px;
+        }
+
+        .header h1 i {
+            margin-right: 10px;
+            color: #187ce4;
         }
 
         .stats {
@@ -61,23 +67,39 @@
             font-weight: 500;
             color: #6c757d;
             transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .tab i {
+            font-size: 14px;
         }
 
         .tab:hover {
-            color: #667eea;
+            color: #187ce4;
         }
 
         .tab.active {
-            color: #667eea;
-            border-bottom-color: #667eea;
+            color: #187ce4;
+            border-bottom-color: #187ce4;
         }
 
         .stat-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #187ce4 0%, #0d5aa7 100%);
             color: white;
             padding: 20px;
             border-radius: 8px;
             text-align: center;
+            position: relative;
+        }
+
+        .stat-card i {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 32px;
+            opacity: 0.3;
         }
 
         .stat-card .value {
@@ -98,8 +120,24 @@
             flex-wrap: wrap;
         }
 
+        .filter-select-wrapper {
+            position: relative;
+            display: inline-block;
+            min-width: 200px;
+        }
+
+        .filter-select-wrapper i {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #6c757d;
+            pointer-events: none;
+            z-index: 1;
+        }
+
         .filter-select {
-            padding: 10px 16px;
+            padding: 10px 16px 10px 40px;
             border: 2px solid #e0e0e0;
             border-radius: 8px;
             font-size: 14px;
@@ -107,16 +145,20 @@
             color: #333;
             cursor: pointer;
             transition: border-color 0.3s;
-            min-width: 200px;
+            width: 100%;
+        }
+
+        .filter-select option {
+            padding: 8px;
         }
 
         .filter-select:hover {
-            border-color: #667eea;
+            border-color: #187ce4;
         }
 
         .filter-select:focus {
             outline: none;
-            border-color: #667eea;
+            border-color: #187ce4;
         }
 
         .btn {
@@ -127,15 +169,22 @@
             font-size: 14px;
             font-weight: 500;
             transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn i {
+            font-size: 14px;
         }
 
         .btn-primary {
-            background: #667eea;
+            background: #187ce4;
             color: white;
         }
 
         .btn-primary:hover {
-            background: #5568d3;
+            background: #1568c4;
             transform: translateY(-2px);
         }
 
@@ -159,7 +208,7 @@
 
         .filter-input:focus {
             outline: none;
-            border-color: #667eea;
+            border-color: #187ce4;
         }
 
         .domains-container {
@@ -187,6 +236,14 @@
             font-size: 24px;
             font-weight: bold;
             color: #333;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .domain-name i {
+            color: #187ce4;
+            font-size: 20px;
         }
 
         .domain-count {
@@ -196,6 +253,13 @@
             border-radius: 20px;
             font-size: 14px;
             font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .domain-count i {
+            font-size: 12px;
         }
 
         .events-list {
@@ -205,7 +269,7 @@
 
         .event-card {
             background: #f8f9fa;
-            border-left: 4px solid #667eea;
+            border-left: 4px solid #187ce4;
             padding: 16px;
             border-radius: 8px;
             transition: all 0.3s;
@@ -234,6 +298,10 @@
             border-left: 3px solid #dc3545;
         }
 
+        .error-messages i {
+            margin-right: 6px;
+        }
+
         .error-message {
             font-size: 12px;
             color: #721c24;
@@ -252,11 +320,26 @@
             font-weight: 600;
             color: #333;
             font-size: 16px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .event-call-id i {
+            color: #187ce4;
+            font-size: 14px;
         }
 
         .event-time {
             color: #6c757d;
             font-size: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .event-time i {
+            font-size: 11px;
         }
 
         .event-details {
@@ -285,11 +368,17 @@
         }
 
         .badge {
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
             padding: 4px 12px;
             border-radius: 12px;
             font-size: 12px;
             font-weight: 600;
+        }
+
+        .badge i {
+            font-size: 11px;
         }
 
         .badge-success {
@@ -311,6 +400,10 @@
             margin-top: 12px;
             padding-top: 12px;
             border-top: 1px solid #e0e0e0;
+        }
+
+        .endpoints-list i {
+            margin-right: 6px;
         }
 
         .endpoint {
@@ -340,6 +433,14 @@
             font-size: 64px;
             margin-bottom: 16px;
             opacity: 0.5;
+        }
+
+        .empty-state-icon i {
+            font-size: 64px;
+        }
+
+        .loading i {
+            margin-right: 10px;
         }
 
         .auto-refresh {
@@ -386,7 +487,7 @@
         }
 
         input:checked + .slider {
-            background-color: #667eea;
+            background-color: #187ce4;
         }
 
         input:checked + .slider:before {
@@ -397,14 +498,17 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>📊 Telephony Forwarder Dashboard</h1>
+            <h1><i class="fas fa-chart-line"></i> Telephony Forwarder Dashboard</h1>
             <div class="controls">
-                <select id="domainFilter" class="filter-select">
-                    <option value="">🌐 Tất cả domains</option>
-                </select>
-                <button class="btn btn-primary" onclick="loadEvents()">🔄 Refresh</button>
-                <a href="/logs" class="btn btn-secondary" style="text-decoration: none; display: inline-block;">📋 Xem Log Files</a>
-                <a href="/config" class="btn btn-secondary" style="text-decoration: none; display: inline-block;">⚙️ Xem Config</a>
+                <div class="filter-select-wrapper">
+                    <i class="fas fa-globe"></i>
+                    <select id="domainFilter" class="filter-select">
+                        <option value="">Tất cả domains</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" onclick="loadEvents()"><i class="fas fa-sync-alt"></i> Refresh</button>
+                <a href="/logs" class="btn btn-secondary" style="text-decoration: none; display: inline-block;"><i class="fas fa-file-alt"></i> Xem Log Files</a>
+                <a href="/config" class="btn btn-secondary" style="text-decoration: none; display: inline-block;"><i class="fas fa-cog"></i> Xem Config</a>
                 <div class="auto-refresh">
                     <label style="color: #333; font-size: 14px;">Auto-refresh:</label>
                     <label class="toggle-switch">
@@ -415,18 +519,22 @@
             </div>
             <div class="stats" id="stats">
                 <div class="stat-card" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">
+                    <i class="fas fa-check-circle"></i>
                     <div class="stat-card value" id="totalSuccessful">0</div>
                     <div class="stat-card label">Successful</div>
                 </div>
                 <div class="stat-card" style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);">
+                    <i class="fas fa-times-circle"></i>
                     <div class="stat-card value" id="totalFailed">0</div>
                     <div class="stat-card label">Failed</div>
                 </div>
                 <div class="stat-card" style="background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);">
+                    <i class="fas fa-redo"></i>
                     <div class="stat-card value" id="retryCount">0</div>
                     <div class="stat-card label">Will Retry</div>
                 </div>
                 <div class="stat-card">
+                    <i class="fas fa-globe"></i>
                     <div class="stat-card value" id="totalDomains">0</div>
                     <div class="stat-card label">Domains</div>
                 </div>
@@ -435,19 +543,19 @@
 
         <div class="header" style="margin-bottom: 10px;">
             <div class="tabs">
-                <button class="tab active" id="tabSuccess" onclick="switchTab('success')">✅ Successful Events</button>
-                <button class="tab" id="tabFailed" onclick="switchTab('failed')">❌ Failed Events</button>
-                <button class="tab" id="tabAll" onclick="switchTab('all')">📊 All Events</button>
+                <button class="tab active" id="tabSuccess" onclick="switchTab('success')"><i class="fas fa-check-circle"></i> Successful Events</button>
+                <button class="tab" id="tabFailed" onclick="switchTab('failed')"><i class="fas fa-times-circle"></i> Failed Events</button>
+                <button class="tab" id="tabAll" onclick="switchTab('all')"><i class="fas fa-chart-bar"></i> All Events</button>
             </div>
         </div>
 
         <div id="loading" class="loading" style="display: none;">
-            ⏳ Đang tải dữ liệu...
+            <i class="fas fa-spinner fa-spin"></i> Đang tải dữ liệu...
         </div>
 
         <div id="domainsContainer" class="domains-container">
             <div class="empty-state">
-                <div class="empty-state-icon">📭</div>
+                <div class="empty-state-icon"><i class="fas fa-inbox"></i></div>
                 <h2>Chưa có events nào được forward</h2>
                 <p>Gửi events để xem chúng ở đây</p>
             </div>

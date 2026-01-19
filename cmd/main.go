@@ -66,8 +66,8 @@ func main() {
 	}
 	defer natsConsumer.Close()
 
-	// Create event store (keep last 1000 events)
-	eventStore := store.NewStore(1000)
+	// Create event store (keep last 10000 events)
+	eventStore := store.NewStore(10000)
 
 	// Create forwarder
 	fwd := forwarder.NewForwarder(cfg, eventStore)

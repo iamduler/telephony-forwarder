@@ -216,8 +216,73 @@ func (h *Handler) HandleGetEvents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Get stats
-	stats := h.store.GetStats()
+	// Limit to 5000 newest events total when returning to frontend
+	const maxEventsToReturn = 5000
+
+	// Collect all events with their timestamps for sorting
+	type eventWithTime struct {
+		forwardedEvent *store.ForwardedEvent
+		failedEvent    *store.FailedEvent
+		timestamp      time.Time
+		domain         string
+		isFailed       bool
+	}
+
+	var allEvents []eventWithTime
+
+	// Collect successful events
+	for domainName, events := range eventsByDomain {
+		for i := range events {
+			allEvents = append(allEvents, eventWithTime{
+				forwardedEvent: &events[i],
+				timestamp:      events[i].ForwardedAt,
+				domain:         domainName,
+				isFailed:       false,
+			})
+		}
+	}
+
+	// Collect failed events
+	for domainName, events := range failedEventsByDomain {
+		for i := range events {
+			allEvents = append(allEvents, eventWithTime{
+				failedEvent: &events[i],
+				timestamp:   events[i].FailedAt,
+				domain:      domainName,
+				isFailed:    true,
+			})
+		}
+	}
+
+	// Sort all events by timestamp (newest first)
+	sort.Slice(allEvents, func(i, j int) bool {
+		return allEvents[i].timestamp.After(allEvents[j].timestamp)
+	})
+
+	// Take only the newest 5000 events
+	if len(allEvents) > maxEventsToReturn {
+		allEvents = allEvents[:maxEventsToReturn]
+	}
+
+	// Rebuild eventsByDomain and failedEventsByDomain from limited events
+	eventsByDomain = make(map[string][]store.ForwardedEvent)
+	failedEventsByDomain = make(map[string][]store.FailedEvent)
+
+	for _, ewt := range allEvents {
+		if ewt.isFailed && ewt.failedEvent != nil {
+			failedEventsByDomain[ewt.domain] = append(failedEventsByDomain[ewt.domain], *ewt.failedEvent)
+		} else if !ewt.isFailed && ewt.forwardedEvent != nil {
+			eventsByDomain[ewt.domain] = append(eventsByDomain[ewt.domain], *ewt.forwardedEvent)
+		}
+	}
+
+	// Get stats - filter by domain if specified
+	var stats map[string]interface{}
+	if domain != "" {
+		stats = h.store.GetStatsByDomain(domain)
+	} else {
+		stats = h.store.GetStats()
+	}
 
 	response := map[string]interface{}{
 		"events_by_domain":        eventsByDomain,

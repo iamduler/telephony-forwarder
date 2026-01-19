@@ -210,3 +210,36 @@ func (s *Store) GetStats() map[string]interface{} {
 	}
 }
 
+// GetStatsByDomain returns statistics about forwarded events filtered by domain
+func (s *Store) GetStatsByDomain(domain string) map[string]interface{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var totalSuccessful int
+	var totalFailed int
+	var retryCount int
+
+	for _, event := range s.successfulEvents {
+		if event.Domain == domain {
+			totalSuccessful++
+		}
+	}
+
+	for _, event := range s.failedEvents {
+		if event.Domain == domain {
+			totalFailed++
+			if event.WillRetry {
+				retryCount++
+			}
+		}
+	}
+
+	return map[string]interface{}{
+		"total_successful": totalSuccessful,
+		"total_failed":     totalFailed,
+		"total_events":     totalSuccessful + totalFailed,
+		"retry_count":      retryCount,
+		"domains":          1,
+	}
+}
+

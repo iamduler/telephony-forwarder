@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Log Viewer - Telephony Forwarder</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <style>
         * {
             margin: 0;
@@ -13,7 +14,7 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #187ce4 0%, #0d5aa7 100%);
             min-height: 100vh;
             padding: 20px;
         }
@@ -37,6 +38,11 @@
             font-size: 28px;
         }
 
+        .header h1 i {
+            margin-right: 10px;
+            color: #187ce4;
+        }
+
         .controls {
             display: flex;
             gap: 12px;
@@ -54,16 +60,22 @@
             font-weight: 500;
             transition: all 0.3s;
             text-decoration: none;
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn i {
+            font-size: 14px;
         }
 
         .btn-primary {
-            background: #667eea;
+            background: #187ce4;
             color: white;
         }
 
         .btn-primary:hover {
-            background: #5568d3;
+            background: #1568c4;
             transform: translateY(-2px);
         }
 
@@ -84,9 +96,29 @@
             min-width: 200px;
         }
 
+        .filter-input-wrapper {
+            position: relative;
+            display: inline-block;
+        }
+
+        .filter-input-wrapper i {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #6c757d;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .filter-input-wrapper select,
+        .filter-input-wrapper input {
+            padding-left: 40px;
+        }
+
         .filter-input:focus {
             outline: none;
-            border-color: #667eea;
+            border-color: #187ce4;
         }
 
         .auto-refresh {
@@ -133,7 +165,7 @@
         }
 
         input:checked + .slider {
-            background-color: #667eea;
+            background-color: #187ce4;
         }
 
         input:checked + .slider:before {
@@ -165,6 +197,14 @@
             font-size: 24px;
             font-weight: bold;
             color: #333;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .domain-name i {
+            color: #187ce4;
+            font-size: 20px;
         }
 
         .domain-count {
@@ -174,6 +214,13 @@
             border-radius: 20px;
             font-size: 14px;
             font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .domain-count i {
+            font-size: 12px;
         }
 
         .events-list {
@@ -183,7 +230,7 @@
 
         .event-card {
             background: #f8f9fa;
-            border-left: 4px solid #667eea;
+            border-left: 4px solid #187ce4;
             padding: 16px;
             border-radius: 8px;
             transition: all 0.3s;
@@ -230,11 +277,26 @@
             font-weight: 600;
             color: #333;
             font-size: 16px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .event-call-id i {
+            color: #187ce4;
+            font-size: 14px;
         }
 
         .event-time {
             color: #6c757d;
             font-size: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .event-time i {
+            font-size: 11px;
         }
 
         .event-details {
@@ -263,11 +325,17 @@
         }
 
         .badge {
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
             padding: 4px 12px;
             border-radius: 12px;
             font-size: 12px;
             font-weight: 600;
+        }
+
+        .badge i {
+            font-size: 11px;
         }
 
         .badge-success {
@@ -304,6 +372,14 @@
             opacity: 0.5;
         }
 
+        .empty-state-icon i {
+            font-size: 64px;
+        }
+
+        .loading i {
+            margin-right: 10px;
+        }
+
         .stats {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -312,11 +388,20 @@
         }
 
         .stat-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #187ce4 0%, #0d5aa7 100%);
             color: white;
             padding: 20px;
             border-radius: 8px;
             text-align: center;
+            position: relative;
+        }
+
+        .stat-card i {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 32px;
+            opacity: 0.3;
         }
 
         .stat-card .value {
@@ -334,15 +419,21 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>📋 Log Viewer</h1>
+            <h1><i class="fas fa-file-alt"></i> Log Viewer</h1>
             <div class="controls">
-                <select id="domainSelect" class="filter-input">
-                    <option value="">-- Chọn domain --</option>
-                </select>
-                <input type="date" id="dateFilter" class="filter-input" style="max-width: 150px;">
-                <button class="btn btn-primary" onclick="loadLogs()">🔄 Refresh</button>
-                <a href="/" class="btn btn-secondary">← Dashboard</a>
-                <a href="/config" class="btn btn-secondary">⚙️ Config</a>
+                <div class="filter-input-wrapper">
+                    <i class="fas fa-globe"></i>
+                    <select id="domainSelect" class="filter-input">
+                        <option value="">-- Chọn domain --</option>
+                    </select>
+                </div>
+                <div class="filter-input-wrapper">
+                    <i class="fas fa-calendar-alt"></i>
+                    <input type="date" id="dateFilter" class="filter-input" style="max-width: 150px;">
+                </div>
+                <button class="btn btn-primary" onclick="loadLogs()"><i class="fas fa-sync-alt"></i> Refresh</button>
+                <a href="/" class="btn btn-secondary"><i class="fas fa-arrow-left"></i> Dashboard</a>
+                <a href="/config" class="btn btn-secondary"><i class="fas fa-cog"></i> Config</a>
                 <div class="auto-refresh">
                     <label style="color: #333; font-size: 14px;">Auto-refresh (5s):</label>
                     <label class="toggle-switch">
@@ -353,14 +444,17 @@
             </div>
             <div class="stats" id="stats" style="display: none;">
                 <div class="stat-card" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">
+                    <i class="fas fa-check-circle"></i>
                     <div class="stat-card value" id="totalSuccessful">0</div>
                     <div class="stat-card label">Successful</div>
                 </div>
                 <div class="stat-card" style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);">
+                    <i class="fas fa-times-circle"></i>
                     <div class="stat-card value" id="totalFailed">0</div>
                     <div class="stat-card label">Failed</div>
                 </div>
                 <div class="stat-card" style="background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);">
+                    <i class="fas fa-redo"></i>
                     <div class="stat-card value" id="retryCount">0</div>
                     <div class="stat-card label">Will Retry</div>
                 </div>
@@ -368,12 +462,12 @@
         </div>
 
         <div id="loading" class="loading" style="display: none;">
-            ⏳ Đang tải dữ liệu...
+            <i class="fas fa-spinner fa-spin"></i> Đang tải dữ liệu...
         </div>
 
         <div id="domainsContainer" class="domains-container">
             <div class="empty-state">
-                <div class="empty-state-icon">📭</div>
+                <div class="empty-state-icon"><i class="fas fa-inbox"></i></div>
                 <h2>Chọn domain và ngày để xem log</h2>
                 <p>Vui lòng chọn domain và ngày từ các dropdown ở trên</p>
             </div>

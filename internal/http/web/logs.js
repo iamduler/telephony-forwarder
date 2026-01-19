@@ -37,10 +37,10 @@ function formatRelativeTime(timestamp) {
 
 function getStateBadge(state) {
     const badges = {
-        'answered': '<span class="badge badge-success">✓ Answered</span>',
-        'missed': '<span class="badge badge-warning">✗ Missed</span>',
-        'busy': '<span class="badge badge-warning">📞 Busy</span>',
-        'completed': '<span class="badge badge-success">✓ Completed</span>',
+        'answered': '<span class="badge badge-success"><i class="fas fa-check-circle"></i> Answered</span>',
+        'missed': '<span class="badge badge-warning"><i class="fas fa-times-circle"></i> Missed</span>',
+        'busy': '<span class="badge badge-warning"><i class="fas fa-phone-alt"></i> Busy</span>',
+        'completed': '<span class="badge badge-success"><i class="fas fa-check-circle"></i> Completed</span>',
     };
     return badges[state] || `<span class="badge badge-info">${state}</span>`;
 }
@@ -54,7 +54,7 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
     if (!hasEvents) {
         $container.html(`
             <div class="empty-state">
-                <div class="empty-state-icon">📭</div>
+                <div class="empty-state-icon"><i class="fas fa-inbox"></i></div>
                 <h2>Không có events nào trong log</h2>
                 <p>Thử chọn domain hoặc ngày khác</p>
             </div>
@@ -83,10 +83,10 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
         html += `
             <div class="domain-card">
                 <div class="domain-header">
-                    <div class="domain-name">🌐 ${domain}</div>
+                    <div class="domain-name"><i class="fas fa-globe"></i> ${domain}</div>
                     <div class="domain-count">
-                        ${events.length > 0 ? `<span style="color: #28a745;">✓${events.length}</span>` : ''}
-                        ${failedEvents.length > 0 ? `<span style="color: #dc3545; margin-left: 8px;">✗${failedEvents.length}</span>` : ''}
+                        ${events.length > 0 ? `<span style="color: #28a745;"><i class="fas fa-check-circle"></i> ${events.length}</span>` : ''}
+                        ${failedEvents.length > 0 ? `<span style="color: #dc3545; margin-left: 8px;"><i class="fas fa-times-circle"></i> ${failedEvents.length}</span>` : ''}
                     </div>
                 </div>
                 <div class="events-list">
@@ -101,11 +101,11 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
                             <div class="event-card">
                                 <div class="event-header">
                                     <div class="event-call-id">
-                                        📞 ${escapeHtml(event.call_id || 'N/A')}
+                                        <i class="fas fa-phone"></i> ${escapeHtml(event.call_id || 'N/A')}
                                         ${msg ? `<span style="margin-left: 8px; font-size: 12px; color: #6c757d; font-weight: normal;">${escapeHtml(msg)}</span>` : ''}
                                     </div>
                                     <div class="event-time" title="${escapeHtml(timestamp)}">
-                                        ${escapeHtml(timestamp)}
+                                        <i class="fas fa-clock"></i> ${escapeHtml(timestamp)}
                                     </div>
                                 </div>
                                 <pre style="background: #f8f9fa; padding: 12px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 12px; margin-top: 12px; white-space: pre-wrap; word-wrap: break-word;">${escapedData}</pre>
@@ -125,12 +125,12 @@ function renderEvents(eventsByDomain, failedEventsByDomain) {
                             <div class="event-card ${cardClass}">
                                 <div class="event-header">
                                     <div class="event-call-id">
-                                        ${willRetry ? '🔄' : '❌'} ${escapeHtml(event.call_id || 'N/A')}
+                                        <i class="fas fa-phone"></i> ${escapeHtml(event.call_id || 'N/A')}
                                         ${msg ? `<span style="margin-left: 8px; font-size: 12px; color: #6c757d; font-weight: normal;">${escapeHtml(msg)}</span>` : ''}
-                                        ${willRetry ? '<span class="badge badge-warning" style="margin-left: 8px;">Will Retry</span>' : ''}
+                                        ${willRetry ? '<span class="badge badge-warning" style="margin-left: 8px;"><i class="fas fa-redo"></i> Will Retry</span>' : ''}
                                     </div>
                                     <div class="event-time" title="${escapeHtml(timestamp)}">
-                                        ${escapeHtml(timestamp)}
+                                        <i class="fas fa-clock"></i> ${escapeHtml(timestamp)}
                                     </div>
                                 </div>
                                 <pre style="background: #f8f9fa; padding: 12px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 12px; margin-top: 12px; white-space: pre-wrap; word-wrap: break-word;">${escapedData}</pre>
@@ -185,7 +185,7 @@ function loadLogs() {
     if (!selectedDomain || !selectedDate) {
         $container.html(`
             <div class="empty-state">
-                <div class="empty-state-icon">📭</div>
+                <div class="empty-state-icon"><i class="fas fa-inbox"></i></div>
                 <h2>Chọn domain và ngày để xem log</h2>
                 <p>Vui lòng chọn domain và ngày từ các dropdown ở trên</p>
             </div>
@@ -223,7 +223,7 @@ function loadLogs() {
             
             $container.html(`
                 <div class="empty-state">
-                    <div class="empty-state-icon">❌</div>
+                    <div class="empty-state-icon"><i class="fas fa-exclamation-triangle"></i></div>
                     <h2>Lỗi khi tải log</h2>
                     <p>${errorMessage}</p>
                     <p style="margin-top: 12px; font-size: 12px; color: #6c757d;">
